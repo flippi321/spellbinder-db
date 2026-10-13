@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local role postgres;
 set local search_path = public, extensions;
-select plan(22);
+select plan(26);
 
 -- ── Setup (as postgres, bypassing RLS) ─────────────────────────────────────────────────────
 insert into auth.users (id, email) values ('cccccccc-0000-4000-a000-000000000000', 'c@test.local');
@@ -20,10 +20,11 @@ grant select on batch to authenticated, service_role;
 insert into batch values (
   '[{"id": "33333333-0000-4000-a000-000000000000", "name": "Card K", "layout": "normal", "mana_cost": "{1}{G}",
      "cmc": 2, "type_line": "Creature — Elf", "rules_text": "Draw a card.", "power": "1", "toughness": "1",
-     "colors": ["G"], "color_identity": ["G"], "legalities": {"commander": "legal"}}]',
+     "colors": ["G"], "color_identity": ["G"], "legalities": {"commander": "legal"}, "game_changer": true,
+     "produced_mana": ["G"], "keywords": ["Trample"], "edhrec_rank": 42}]',
   '[{"id": "44444444-0000-4000-a000-000000000001", "card_id": "33333333-0000-4000-a000-000000000000", "set": "tst",
      "collector_number": "1", "rarity": "rare", "artist": "A. Artist", "image_uris": {"normal": "https://x/1.jpg"},
-     "finishes": ["nonfoil", "foil"]},
+     "finishes": ["nonfoil", "foil"], "released_at": "2024-02-09", "set_name": "Test Set", "lang": "en"},
     {"id": "44444444-0000-4000-a000-000000000002", "card_id": "33333333-0000-4000-a000-000000000000", "set": "tst",
      "collector_number": "2", "rarity": "rare", "finishes": ["etched"]}]',
   '[{"version_id": "44444444-0000-4000-a000-000000000001", "source": "scryfall", "usd": "1.50", "eur": "1.20",
@@ -70,6 +71,18 @@ select is(
   (select count(*)::int from public.card_prices
    where version_id = '44444444-0000-4000-a000-000000000002' and coalesce(usd, eur, tix) is null),
   1, 'a version without prices still gets a price row');
+select is(
+  (select (game_changer, produced_mana, keywords, edhrec_rank)::text from public.cards
+   where id = '33333333-0000-4000-a000-000000000000'),
+  '(t,{G},{Trample},42)', 'the Commander fields are stored (0008)');
+select is(
+  (select (released_at, set_name, lang, digital)::text from public.card_versions
+   where id = '44444444-0000-4000-a000-000000000001'),
+  '(2024-02-09,"Test Set",en,f)', 'the printing fields are stored (0008)');
+select is(
+  (select (released_at, set_name, lang, digital)::text from public.card_versions
+   where id = '44444444-0000-4000-a000-000000000002'),
+  '(,,,f)', 'a version sent without them has no date or language and is not digital');
 
 -- ── Unchanged rows are left alone; prices are always refreshed ─────────────────────────────
 update public.cards set updated_at = '2026-01-01' where id = '33333333-0000-4000-a000-000000000000';
@@ -111,6 +124,15 @@ select is(
   (select count(*)::int from public.card_versions
    where card_id = '33333333-0000-4000-a000-000000000000' and updated_at = '2026-01-01'),
   1, 'only the changed version gets a new updated_at');
+
+update batch set
+  card_rows = jsonb_set(card_rows, '{0,edhrec_rank}', '43'),
+  version_rows = jsonb_set(version_rows, '{0,set_name}', '"Test Set Promos"');
+set local role service_role;
+select is(
+  (select public.sync_card_batch(card_rows, version_rows, price_rows) from batch), 4,
+  'a new EDHREC rank and a new set name count as changes too');
+set local role postgres;
 
 -- ── A version never moves to another card ──────────────────────────────────────────────────
 insert into public.cards (id, name, type_line) values ('33333333-0000-4000-a000-000000000009', 'Card L', 'Instant');

@@ -144,6 +144,10 @@ function toRows(c: Json) {
           toughness: f.toughness,
           loyalty: f.loyalty,
         })) ?? null,
+      game_changer: rules.game_changer ?? false,
+      produced_mana: rules.produced_mana ?? null,
+      keywords: rules.keywords ?? [],
+      edhrec_rank: rules.edhrec_rank ?? null,
     },
     version: {
       id: c.id,
@@ -155,6 +159,10 @@ function toRows(c: Json) {
       image_uris: slimImages(c.image_uris),
       card_faces: faces?.map((f) => ({ image_uris: slimImages(f.image_uris) ?? undefined, artist: f.artist })) ?? null,
       finishes: finishes.length > 0 ? finishes : ['nonfoil'],
+      released_at: c.released_at ?? null,
+      set_name: c.set_name ?? null,
+      lang: c.lang ?? null,
+      digital: c.digital ?? false,
     },
     price: {
       version_id: c.id,
