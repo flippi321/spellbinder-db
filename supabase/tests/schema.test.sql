@@ -1,4 +1,4 @@
--- Schema rules: card foreign keys, condition and finish enums, updated_at triggers, and the game → game night link.
+-- Schema rules: card foreign keys, the collection key, condition and finish enums, updated_at triggers, and the game → game night link.
 -- Run: `npm run test:db`. Everything runs in one transaction and is rolled back.
 --
 -- A and B share playgroup G1; C is alone in G2. Card X has version VX, card Y has version VY.
@@ -7,7 +7,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local role postgres;
 set local search_path = public, extensions;
-select plan(23);
+select plan(26);
 
 -- ── Setup (as postgres, bypassing RLS) ─────────────────────────────────────────────────────
 insert into auth.users (id, email) values
@@ -54,22 +54,32 @@ select throws_ok(
      values ('bbbbbbbb-0000-4000-a000-000000000000', '11111111-0000-4000-a000-000000000000', '55555555-0000-4000-a000-000000000000', 1) $$,
   '23503', null, 'a collection item''s card must match its version');
 
--- ── Condition and finish ───────────────────────────────────────────────────────────────────
-insert into public.collection_items (id, user_id, version_id, card_id, quantity)
-values ('ffffffff-0000-4000-a000-000000000001', 'bbbbbbbb-0000-4000-a000-000000000000',
-        '11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 1);
-select is((select condition::text from public.collection_items where id = 'ffffffff-0000-4000-a000-000000000001'), 'NM',
-  'condition defaults to Near Mint');
-select is((select finish::text from public.collection_items where id = 'ffffffff-0000-4000-a000-000000000001'), 'nonfoil',
-  'finish defaults to nonfoil');
+-- ── Collection rows: one per user, version and finish ──────────────────────────────────────
+select col_is_pk('public', 'collection_items', array['user_id', 'version_id', 'finish'],
+  'a collection row is keyed by user, version and finish');
+select hasnt_column('public', 'collection_items', 'id', 'collection rows have no surrogate id');
+insert into public.collection_items (user_id, version_id, card_id, quantity)
+values ('bbbbbbbb-0000-4000-a000-000000000000', '11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 1);
+select is(
+  (select condition::text from public.collection_items
+   where user_id = 'bbbbbbbb-0000-4000-a000-000000000000' and version_id = '11111111-0000-4000-a000-000000000000'),
+  'NM', 'condition defaults to Near Mint');
+select is(
+  (select finish::text from public.collection_items
+   where user_id = 'bbbbbbbb-0000-4000-a000-000000000000' and version_id = '11111111-0000-4000-a000-000000000000'),
+  'nonfoil', 'finish defaults to nonfoil');
 select throws_ok(
   $$ insert into public.collection_items (user_id, version_id, card_id, quantity, condition)
      values ('bbbbbbbb-0000-4000-a000-000000000000', '11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 1, 'MP') $$,
   '22P02', null, 'old US grades are not conditions');
 select lives_ok(
-  $$ insert into public.collection_items (user_id, version_id, card_id, quantity, condition, finish)
-     values ('bbbbbbbb-0000-4000-a000-000000000000', '11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 1, 'EX', 'etched') $$,
-  'an Excellent etched copy is its own stack');
+  $$ insert into public.collection_items (user_id, version_id, card_id, quantity, finish)
+     values ('bbbbbbbb-0000-4000-a000-000000000000', '11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 1, 'foil') $$,
+  'foil copies of a version are their own row');
+select throws_ok(
+  $$ insert into public.collection_items (user_id, version_id, card_id, quantity, condition)
+     values ('bbbbbbbb-0000-4000-a000-000000000000', '11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 1, 'EX') $$,
+  '23505', null, 'another condition of the same version and finish is not a second row');
 
 -- ── updated_at: an update always stamps now(), whatever the client sends ───────────────────
 insert into public.loan_requests (id, card_id, requester_id, owner_id)
@@ -83,8 +93,14 @@ update public.profiles set updated_at = '2000-01-01' where id = 'aaaaaaaa-0000-4
 select is((select updated_at from public.profiles where id = 'aaaaaaaa-0000-4000-a000-000000000000'), now(), 'profiles stamp updated_at');
 update public.playgroups set updated_at = '2000-01-01' where id = '99999999-0000-4000-a000-000000000001';
 select is((select updated_at from public.playgroups where id = '99999999-0000-4000-a000-000000000001'), now(), 'playgroups stamp updated_at');
-update public.collection_items set updated_at = '2000-01-01' where id = 'ffffffff-0000-4000-a000-000000000001';
-select is((select updated_at from public.collection_items where id = 'ffffffff-0000-4000-a000-000000000001'), now(), 'collection items stamp updated_at');
+update public.collection_items set updated_at = '2000-01-01'
+where user_id = 'bbbbbbbb-0000-4000-a000-000000000000' and version_id = '11111111-0000-4000-a000-000000000000'
+  and finish = 'nonfoil';
+select is(
+  (select updated_at from public.collection_items
+   where user_id = 'bbbbbbbb-0000-4000-a000-000000000000' and version_id = '11111111-0000-4000-a000-000000000000'
+     and finish = 'nonfoil'),
+  now(), 'collection items stamp updated_at');
 update public.loan_requests set updated_at = '2000-01-01' where id = 'abababab-0000-4000-a000-000000000000';
 select is((select updated_at from public.loan_requests where id = 'abababab-0000-4000-a000-000000000000'), now(), 'loan requests stamp updated_at');
 update public.game_nights set updated_at = '2000-01-01' where id = 'eeeeeeee-0000-4000-a000-000000000001';
