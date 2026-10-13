@@ -38,8 +38,8 @@ never a 500 with the model's raw text.
    `context.userId` in the body (the client can send anything).
 3. **Build the context server-side** (never trust card lists from the client):
    - the asked-about deck(s) from `context.deckIds` (filtered to decks the caller can read): commander, bracket,
-     theme, cards grouped by category, joined to `cards` for name, type line, mana value and oracle text;
-   - the caller's collection: owned oracle ids with quantities, and which are spare (in no deck);
+     theme, cards grouped by category, joined to `cards` for name, type line, mana value and rules text;
+   - the caller's collection: owned card ids with quantities, and which are spare (in no deck);
    - playgroup members' cards that matter (friend-owned cards that fit the deck's color identity), with owner names.
    - Keep it compact: names + short fields, no image URIs. Put stable instructions in a cached system prompt.
 4. **Prompt rules for the model:** Commander format and Brackets; only recommend real cards; prefer cards the user owns,

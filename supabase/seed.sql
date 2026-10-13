@@ -81,7 +81,14 @@ select '00000000-0000-4000-b000-000000000001',
 from unnest(array[3, 2, 1, 3, 4, 2, 3, 5, 1, 3, 2, 4, 3, 1, 2, 5, 3, 4, 2, 1, 3]) with ordinality as s (w, n);
 
 -- ── Loans ───────────────────────────────────────────────────────────────────────────────────
-insert into public.loan_requests (card_oracle_id, requester_id, owner_id, status, note, created_at)
+-- Loaned cards must exist in `cards`. Just the basics: the app fetches each card's versions from Scryfall on first use.
+insert into public.cards (id, name, mana_cost, cmc, type_line, colors, color_identity)
+values
+  ('d75b9c82-1b49-4c3e-a1b5-aeef57d6644b', 'Cyclonic Rift', '{1}{U}', 2, 'Instant', '{U}', '{U}'),
+  ('ca204b66-8d0c-431a-8d34-282f7c2d17da', 'Lightning Greaves', '{2}', 2, 'Artifact — Equipment', '{}', '{}'),
+  ('53236dd7-845a-444c-96d5-f41ed7325d8f', 'Rhystic Study', '{2}{U}', 3, 'Enchantment', '{U}', '{U}');
+
+insert into public.loan_requests (card_id, requester_id, owner_id, status, note, created_at)
 values
   -- Cyclonic Rift: Erik → you
   ('d75b9c82-1b49-4c3e-a1b5-aeef57d6644b', '00000000-0000-4000-a000-000000000001', '00000000-0000-4000-a000-000000000004',

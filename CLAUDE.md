@@ -41,7 +41,10 @@ Several agents may work on this repo and `../spellbinder-app` at the same time. 
 - Every table has RLS enabled with explicit policies, plus a pgTAP test for each rule.
 - No secrets in the repo. The Anthropic key lives in Supabase secrets; service-role keys never leave the dashboard.
 - Auth is email + password with confirmations off; the project sends no email (no SMTP).
-- The `cards` table only stores Scryfall data and image **URLs**, never images.
+- The card cache (`cards`, `card_versions`, `card_prices`) only stores Scryfall data and image **URLs**, never images.
+- Card identity: a **card** (`cards.id` = Scryfall oracle_id) has **versions** (`card_versions.id` = Scryfall id).
+  Every other table says `card_id` / `version_id`, with a foreign key; "oracle" only means the AI feature.
+- Tables rows change in have `updated_at`, stamped by a `before update` trigger (`public.touch_updated_at()`).
 
 ## Skills (`.claude/skills/`)
 - `supabase-migration` — any schema change: migration + RLS + tests, then regenerate types in the clients.

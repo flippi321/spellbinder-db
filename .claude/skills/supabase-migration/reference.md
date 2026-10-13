@@ -21,7 +21,7 @@ RLS-only helpers live in the `private` schema (not exposed by the API); only rea
 create table if not exists public.wishlist_items (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null default auth.uid() references public.profiles (id) on delete cascade,
-  oracle_id   uuid not null,
+  card_id     uuid not null references public.cards (id),
   created_at  timestamptz not null default now()
 );
 create index if not exists wishlist_items_user_idx on public.wishlist_items (user_id);

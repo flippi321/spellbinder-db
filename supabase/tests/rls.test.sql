@@ -1,4 +1,4 @@
--- RLS and business-rule tests for 0001_init.sql. Run: `npm run test:db` (local) or `npx supabase test db --linked`.
+-- RLS and business-rule tests for the schema's access rules. Run: `npm run test:db` (local) or `npx supabase test db --linked`.
 -- Everything runs in one transaction and is rolled back, so it leaves no data behind.
 --
 -- Users: A and B end up in the same playgroup; C is a stranger.
@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local role postgres; -- the remote CLI logs in as a temporary role; act as postgres like a local run
 set local search_path = public, extensions;
-select plan(29);
+select plan(31);
 
 -- ── Setup (as postgres, bypassing RLS) ─────────────────────────────────────────────────────
 insert into auth.users (id, email, raw_user_meta_data) values
@@ -24,13 +24,14 @@ select is(
   (select display_name from public.profiles where id = 'cccccccc-0000-4000-a000-000000000000'),
   'c', 'display name falls back to the email name');
 
-insert into public.cards (scryfall_id, oracle_id, name, type_line, set, collector_number)
-values ('11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 'Sol Ring', 'Artifact', 'cmm', '1');
-insert into public.collection_items (user_id, scryfall_id, oracle_id, quantity)
+insert into public.cards (id, name, type_line) values ('22222222-0000-4000-a000-000000000000', 'Sol Ring', 'Artifact');
+insert into public.card_versions (id, card_id, set, collector_number)
+values ('11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 'cmm', '1');
+insert into public.collection_items (user_id, version_id, card_id, quantity)
 values ('bbbbbbbb-0000-4000-a000-000000000000', '11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 2);
-insert into public.decks (id, owner_id, name, commander_oracle_id)
+insert into public.decks (id, owner_id, name, commander_card_id)
 values ('dddddddd-0000-4000-a000-000000000000', 'bbbbbbbb-0000-4000-a000-000000000000', 'Bob''s deck', '22222222-0000-4000-a000-000000000000');
-insert into public.deck_cards (deck_id, oracle_id) values ('dddddddd-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000');
+insert into public.deck_cards (deck_id, card_id) values ('dddddddd-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000');
 
 -- ── Before sharing a playgroup: A sees nothing of B's ──────────────────────────────────────
 set local role authenticated;
@@ -40,7 +41,7 @@ select is((select count(*)::int from public.profiles where id = 'bbbbbbbb-0000-4
 select is((select count(*)::int from public.collection_items), 0, 'A cannot see B''s collection yet');
 select is((select count(*)::int from public.decks), 0, 'A cannot see B''s decks yet');
 select throws_ok(
-  $$ insert into public.loan_requests (card_oracle_id, requester_id, owner_id)
+  $$ insert into public.loan_requests (card_id, requester_id, owner_id)
      values ('22222222-0000-4000-a000-000000000000', 'aaaaaaaa-0000-4000-a000-000000000000', 'bbbbbbbb-0000-4000-a000-000000000000') $$,
   '42501', null, 'A cannot ask a stranger for a loan');
 select isnt((select (public.create_playgroup('Test Table')).id), null, 'A creates a playgroup');
@@ -68,17 +69,17 @@ delete from public.decks;
 select is((select quantity from public.collection_items), 2, 'A cannot change B''s collection');
 select is((select count(*)::int from public.decks), 1, 'A cannot delete B''s deck');
 select throws_ok(
-  $$ insert into public.collection_items (user_id, scryfall_id, oracle_id, quantity)
+  $$ insert into public.collection_items (user_id, version_id, card_id, quantity)
      values ('bbbbbbbb-0000-4000-a000-000000000000', '11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 1) $$,
   '42501', null, 'A cannot add cards to B''s binder');
 
 -- ── Loans ──────────────────────────────────────────────────────────────────────────────────
 select throws_ok(
-  $$ insert into public.loan_requests (card_oracle_id, requester_id, owner_id, status)
+  $$ insert into public.loan_requests (card_id, requester_id, owner_id, status)
      values ('22222222-0000-4000-a000-000000000000', 'aaaaaaaa-0000-4000-a000-000000000000', 'bbbbbbbb-0000-4000-a000-000000000000', 'lent') $$,
   '42501', null, 'a new request must be pending');
 select lives_ok(
-  $$ insert into public.loan_requests (card_oracle_id, requester_id, owner_id)
+  $$ insert into public.loan_requests (card_id, requester_id, owner_id)
      values ('22222222-0000-4000-a000-000000000000', 'aaaaaaaa-0000-4000-a000-000000000000', 'bbbbbbbb-0000-4000-a000-000000000000') $$,
   'A asks playgroup peer B for a loan');
 select throws_ok($$ update public.loan_requests set status = 'lent' $$, 'P0001', null, 'the requester cannot approve their own request');
@@ -105,13 +106,15 @@ select is(
   (select count(*)::int from public.playgroups) + (select count(*)::int from public.game_nights)
     + (select count(*)::int from public.loan_requests) + (select count(*)::int from public.collection_items),
   0, 'C sees no playgroup, game night, loan or collection');
-select is((select count(*)::int from public.cards), 1, 'any signed-in user reads the card cache');
+select is((select count(*)::int from public.cards where id = '22222222-0000-4000-a000-000000000000'), 1, 'any signed-in user reads cards');
+select is((select count(*)::int from public.card_versions where id = '11111111-0000-4000-a000-000000000000'), 1, 'any signed-in user reads card versions');
 
 -- ── Signed out ─────────────────────────────────────────────────────────────────────────────
 set local role postgres;
 set local role anon;
 select throws_ok($$ select * from public.profiles $$, '42501', null, 'anon cannot read profiles');
-select throws_ok($$ select * from public.cards $$, '42501', null, 'anon cannot read the card cache');
+select throws_ok($$ select * from public.cards $$, '42501', null, 'anon cannot read cards');
+select throws_ok($$ select * from public.card_versions $$, '42501', null, 'anon cannot read card versions');
 
 set local role postgres;
 select * from finish();

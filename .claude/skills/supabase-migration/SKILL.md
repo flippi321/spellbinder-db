@@ -21,12 +21,17 @@ Source of truth for the product: `../spellbinder-app/docs/VISION.md` §6. SQL pa
 - Idempotent where cheap (`if not exists`, `drop policy if exists` before `create policy`).
 - **Every new table:** `alter table … enable row level security;` plus explicit policies, and add it to the
   grants (`grant select, insert, update, delete … to authenticated`; nothing for `anon`).
-- Primary keys `uuid default gen_random_uuid()` (except `cards.scryfall_id` and join tables), `created_at timestamptz
-  default now()`, foreign keys with `on delete cascade` for owned rows, `check` constraints for status enums that match
-  the TS unions in `../spellbinder-app/src/types/domain.ts`.
+- Primary keys `uuid default gen_random_uuid()` (except join tables and `cards.id` / `card_versions.id`, which are
+  Scryfall's ids), `created_at timestamptz default now()`, foreign keys with `on delete cascade` for owned rows,
+  `check` constraints for status enums that match the TS unions in `../spellbinder-app/src/types/domain.ts`.
 - Index every foreign key and every column a client filters on.
-- Card identity: collection rows reference `cards(scryfall_id)` and also store `oracle_id`; deck/loan rows store
-  `oracle_id` only. Both are `uuid`.
+- Card identity: a physical copy references its version and card as a pair, `(version_id, card_id)` →
+  `card_versions (id, card_id)`; anything about "a card in general" (deck slots, loans, games, wishlists) stores
+  `card_id` → `cards (id)`. Both are `uuid` foreign keys, so clients must cache a card before naming it.
+- Rows that change get `updated_at timestamptz not null default now()` plus a `before update` trigger calling
+  `public.touch_updated_at()`.
+- Fixed value sets the client picks from (condition, finish) are Postgres enums (`card_condition`, `card_finish`);
+  statuses stay `check` constraints.
 - Functions: `security definer` only when needed (and then `set search_path = ''` with fully qualified names);
   revoke `execute` from `anon`/`public` on anything that isn't a public RPC.
 - Tables a client should get live updates for: `alter publication supabase_realtime add table …`.
@@ -40,7 +45,8 @@ Source of truth for the product: `../spellbinder-app/docs/VISION.md` §6. SQL pa
 | `game_nights`, `games` | members | members create; creator deletes (games: creator edits) |
 | `rsvps` | members | only your own row |
 | `loan_requests` | requester and owner | requester creates (pending); trigger: owner lends/declines, either party returns |
-| `cards` (Scryfall cache) | any authenticated user | any authenticated user (until the bulk sync, TODO SB-4) |
+| `cards`, `card_versions` (Scryfall cache) | any authenticated user | any authenticated user (until the bulk sync, TODO SB-4) |
+| `card_prices`, `card_price_history`, view `collection_item_prices` | any authenticated user (the view: own + peers' stacks) | service role only (the daily sync) |
 
 Use the helpers `private.is_playgroup_member(group_id)` and `private.shares_playgroup(other_user)` (security definer)
 instead of subqueries on `playgroup_members`, which would make the policies recurse. Wrap `auth.uid()` as
