@@ -4,7 +4,8 @@ The Supabase backend for Spellbinder, a free Magic: The Gathering Commander comp
 friends. It is shared by two clients in separate repos: the mobile app (`../spellbinder-app`, Expo) and the future
 website (`../spellbinder-web`). Product vision: `../spellbinder-app/docs/VISION.md`.
 
-Remote project ref: `fobbpfvhnelpforjqugd`.
+Remote project ref: `fobbpfvhnelpforjqugd`. This repo is linked to it, and it is the **live** backend the apps use:
+migrations pushed from here change the real database. The local stack is only for development and tests.
 
 ## What lives here
 - `supabase/migrations/` — the schema, RLS policies, RPCs and triggers. **The single source of truth for the database.**
