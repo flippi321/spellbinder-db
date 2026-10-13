@@ -1,0 +1,16 @@
+<!-- Password reset. {{ .Token }} is the 6-digit code; the app verifies it with verifyOtp({ type: 'recovery' }). -->
+<div style="margin:0;padding:32px 16px;background:#0B0A0F;font-family:Helvetica,Arial,sans-serif;color:#EEE8DA;">
+  <div style="max-width:440px;margin:0 auto;background:#16141C;border:1px solid #2A2633;border-radius:16px;padding:32px 28px;">
+    <p style="margin:0 0 4px;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#D4AF6A;">Spellbinder</p>
+    <h1 style="margin:0 0 16px;font-family:Georgia,serif;font-size:24px;font-weight:normal;color:#EEE8DA;">Reset your password</h1>
+    <p style="margin:0 0 24px;font-size:15px;line-height:1.5;color:#CFC8B8;">
+      Enter this code in the app to choose a new password for {{ .Email }}.
+    </p>
+    <p style="margin:0 0 24px;padding:16px;background:#2A2418;border:1px solid #4A4232;border-radius:12px;text-align:center;font-family:'Courier New',monospace;font-size:32px;letter-spacing:8px;color:#F0DDB2;">
+      {{ .Token }}
+    </p>
+    <p style="margin:0;font-size:13px;line-height:1.5;color:#A8A08F;">
+      The code expires in 15 minutes. If you didn't ask to reset your password, you can ignore this email.
+    </p>
+  </div>
+</div>
