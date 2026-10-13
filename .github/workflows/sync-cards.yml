@@ -1,0 +1,45 @@
+# Daily card sync: Scryfall bulk data → cards, card_versions, card_prices (scripts/sync-cards.ts, roadmap CC-3).
+#
+# Needs two repository secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL               https://<project-ref>.supabase.co
+#   SUPABASE_SERVICE_ROLE_KEY  the project's secret key (sb_secret_…) or legacy service_role key
+# A failed run fails the job, so GitHub emails the repo owner.
+#
+# GitHub disables scheduled workflows after 60 days without commits to the repo. If "Card data updated" in the app
+# gets old, check the Actions tab and re-enable the workflow.
+
+name: Sync cards
+
+on:
+  schedule:
+    # Scryfall regenerates its bulk files around 09:00–09:30 UTC; this picks up the same day's file.
+    - cron: '30 10 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Load the bulk file even if this file was already loaded
+        type: boolean
+        default: false
+
+concurrency:
+  group: sync-cards
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Sync cards from Scryfall
+        run: node scripts/sync-cards.ts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SYNC_FORCE: ${{ inputs.force || 'false' }}

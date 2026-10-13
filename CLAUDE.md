@@ -11,12 +11,14 @@ Remote project ref: `fobbpfvhnelpforjqugd`.
 - `supabase/functions/` — Edge Functions (Deno). `oracle` is a stub for the AI deck advisor.
 - `supabase/tests/` — pgTAP tests for every access rule.
 - `supabase/seed.sql` — local-only dev data (five users, password `spellbinder-dev`). Never pushed.
+- `scripts/sync-cards.ts` + `.github/workflows/sync-cards.yml` — the daily Scryfall card + price sync (README → Card sync).
 - `supabase/config.toml` — local stack settings, and the auth settings pushed with `supabase config push`.
 
 ## Commands
 - Local stack (Podman, see README): `npm run db:start` / `db:stop` / `db:status`
 - Re-apply migrations + seed locally: `npm run db:reset`
 - Tests: `npm run test:db` · Lint: `npm run db:lint`
+- Card sync against the local stack: `npm run sync:cards` (needs `.env`, see README → Card sync)
 - Types for a client: `npm run types --silent > <client>/src/types/database.ts` (or `types:local`)
 
 Before saying a change is done, run `db:reset`, `test:db` and `db:lint` locally.

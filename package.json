@@ -2,6 +2,7 @@
   "name": "spellbinder-db",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Supabase backend for Spellbinder: migrations, RLS, Edge Functions. Shared by the app and the website.",
   "scripts": {
     "db:start": "supabase start",
@@ -14,7 +15,8 @@
     "test:db": "supabase test db",
     "types": "supabase gen types typescript --linked",
     "types:local": "supabase gen types typescript --local",
-    "functions:serve": "supabase functions serve"
+    "functions:serve": "supabase functions serve",
+    "sync:cards": "node --env-file-if-exists=.env scripts/sync-cards.ts"
   },
   "devDependencies": {
     "supabase": "^2.120.0"
