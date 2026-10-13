@@ -11,7 +11,7 @@
 do $$
 begin
   if exists (select 1 from public.collection_items) then
-    raise exception 'collection_items has rows: merge them per (user_id, version_id, finish) before migration 0008';
+    raise exception 'collection_items has rows: merge them per (user_id, version_id, finish) before migration 0007';
   end if;
 end;
 $$;
