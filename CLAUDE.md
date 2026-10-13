@@ -21,6 +21,17 @@ Remote project ref: `fobbpfvhnelpforjqugd`.
 
 Before saying a change is done, run `db:reset`, `test:db` and `db:lint` locally.
 
+## Working alongside other agents
+
+Several agents may work on this repo and `../spellbinder-app` at the same time. The work list is
+`../spellbinder-app/docs/TODO.md`; who is doing what is in **`WORKLOG.md` in the folder that holds both repos**
+(`C:\Users\chrbre\Spellbinder\WORKLOG.md`).
+- Before starting a TODO item, read `WORKLOG.md`, follow its rules, and claim the item with the files you'll touch.
+- **Claim your migration number there** before creating the file, so two agents never both write `0003_…`.
+- Work in your own git worktree on a branch named after the item ID. Never in the main checkout while others run.
+- Only one local Supabase stack runs per machine (fixed ports): coordinate `db:reset` / `test:db` through the log.
+- When done, update your row. Don't merge to `main`, and never push to the remote project (see Hard rules).
+
 ## Hard rules
 - **Never run anything against the remote project without asking first:** `db push`, `config push`, `functions deploy`,
   `secrets set`, `db reset --linked`, or SQL through the MCP. Show the dry run / diff and wait for a yes.
