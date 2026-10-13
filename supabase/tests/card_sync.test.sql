@@ -13,7 +13,7 @@ select plan(22);
 -- ── Setup (as postgres, bypassing RLS) ─────────────────────────────────────────────────────
 insert into auth.users (id, email) values ('cccccccc-0000-4000-a000-000000000000', 'c@test.local');
 insert into public.card_sync_runs (bulk_type, bulk_updated_at, status, finished_at)
-values ('default_cards', '2026-10-13 09:06:00+00', 'ok', now());
+values ('test_cards', '2026-10-13 09:06:00+00', 'ok', now());
 
 create temp table batch (card_rows jsonb, version_rows jsonb, price_rows jsonb) on commit drop;
 grant select on batch to authenticated, service_role;
@@ -34,7 +34,7 @@ insert into batch values (
 -- ── Users read the run log but write nothing ───────────────────────────────────────────────
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub": "cccccccc-0000-4000-a000-000000000000", "role": "authenticated"}', true);
-select is((select count(*)::int from public.card_sync_runs), 1, 'a user reads the sync runs');
+select is((select count(*)::int from public.card_sync_runs where bulk_type = 'test_cards'), 1, 'a user reads the sync runs (whatever real runs the database already has)');
 select throws_ok(
   $$ insert into public.card_sync_runs (bulk_type, bulk_updated_at) values ('default_cards', now()) $$,
   '42501', null, 'a user cannot log a run');
