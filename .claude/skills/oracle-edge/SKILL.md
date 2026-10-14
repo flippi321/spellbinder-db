@@ -39,7 +39,9 @@ never a 500 with the model's raw text.
 3. **Build the context server-side** (never trust card lists from the client):
    - the asked-about deck(s) from `context.deckIds` (filtered to decks the caller can read): commander, bracket,
      theme, cards grouped by category, joined to `cards` for name, type line, mana value and rules text;
-   - the caller's collection: owned card ids with quantities, and which are spare (in no deck);
+   - the caller's collection: owned card ids with quantities, and how many of each are spare. Spare is decision D-5:
+     every copy owned (all printings and finishes) minus the copies the caller's decks' slots use, floored at 0
+     (3 Sol Rings, 2 decks → 1 spare). The app computes the same in `buildBinderEntries`; keep them in step;
    - playgroup members' cards that matter (friend-owned cards that fit the deck's color identity), with owner names.
    - Keep it compact: names + short fields, no image URIs. Put stable instructions in a cached system prompt.
 4. **Prompt rules for the model:** Commander format and Brackets; only recommend real cards; prefer cards the user owns,

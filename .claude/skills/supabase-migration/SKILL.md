@@ -45,7 +45,7 @@ Source of truth for the product: `../spellbinder-app/docs/VISION.md` §6. SQL pa
 | `game_nights`, `games` | members | members create; creator deletes (games: creator edits) |
 | `rsvps` | members | only your own row |
 | `loan_requests` | requester and owner | requester creates (pending); trigger: owner lends/declines, either party returns |
-| `cards`, `card_versions` (Scryfall cache) | any authenticated user | any authenticated user (until the bulk sync, TODO SB-4) |
+| `cards`, `card_versions` (Scryfall cache) | any authenticated user | any authenticated user (until the lockdown, backlog SB-13) |
 | `card_prices`, `card_price_history`, view `collection_item_prices` | any authenticated user (the view: own + peers' stacks) | service role only (the daily sync) |
 
 Use the helpers `private.is_playgroup_member(group_id)` and `private.shares_playgroup(other_user)` (security definer)
