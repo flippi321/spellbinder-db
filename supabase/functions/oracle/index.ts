@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
 
   // TODO(context): build compact, stable-ordered context with RLS-scoped queries as this user:
   //   - decks + deck_cards (categories), joined to `cards` for names, types and mana costs
-  //   - collection_items: owned oracle ids, quantities, spares (= in no deck)
+  //   - collection_items: owned card ids, quantities, spares (= copies owned minus copies the user's decks use, D-5)
   //   - playgroup peers' collection_items, so answers can say "Jonas has one"
   // Sort everything deterministically so the prompt prefix stays cacheable.
 
