@@ -53,6 +53,8 @@ instead of subqueries on `playgroup_members`, which would make the policies recu
 `(select auth.uid())`. One permissive policy per table and action (no `for all` next to a `for select`).
 
 ## 3. Test it
+- Test first (`superpowers:test-driven-development`): write the pgTAP cases for a rule before its policy, function or
+  trigger, run `npm run test:db`, and watch them fail for the right reason. Then write the SQL.
 - Add pgTAP cases to `supabase/tests/` for every new rule (pattern: `rls.test.sql`; act as a user with
   `set local role authenticated` + `request.jwt.claims`). Update `plan(N)`.
 - `npm run db:reset` → `npm run test:db` → `npm run db:lint`. All must pass.

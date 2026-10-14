@@ -24,16 +24,42 @@ migrations pushed from here change the real database. The local stack is only fo
 
 Before saying a change is done, run `db:reset`, `test:db` and `db:lint` locally.
 
-## Working alongside other agents
+## Workflow (Superpowers) and working alongside other agents
+
+The **Superpowers** plugin is enabled for this repo (`.claude/settings.json`). Its skills (`superpowers:*`) say *how* to
+work: brainstorm, plan, test first, review, verify, finish. This repo's skills say *what* the backend needs.
+**Where Superpowers and this file disagree, this file wins**, and the Hard rules below always apply.
 
 Several agents may work on this repo and `../spellbinder-app` at the same time. The work list is
 `../spellbinder-app/docs/TODO.md`; who is doing what is in **`WORKLOG.md` in the folder that holds both repos**
 (`C:\Users\chrbre\Spellbinder\WORKLOG.md`).
-- Before starting a TODO item, read `WORKLOG.md`, follow its rules, and claim the item with the files you'll touch.
-- **Claim your migration number there** before creating the file, so two agents never both write `0003_…`.
-- Work in your own git worktree on a branch named after the item ID. Never in the main checkout while others run.
-- Only one local Supabase stack runs per machine (fixed ports): coordinate `db:reset` / `test:db` through the log.
-- When done, update your row. Don't merge to `main`, and never push to the remote project (see Hard rules).
+
+**Order for a TODO item:**
+1. Read `WORKLOG.md`, follow its rules, and claim the item with the files you'll touch. **Claim your migration number
+   there** before creating the file, so two agents never both write `0003_…`.
+2. Create your worktree (below) and work only there. Never in the main checkout while others run.
+3. `superpowers:brainstorming`, starting from the TODO item. Spec:
+   `docs/superpowers/specs/YYYY-MM-DD-<id>-<topic>-design.md`, committed on your branch.
+4. `superpowers:writing-plans`. Plan: `docs/superpowers/plans/YYYY-MM-DD-<id>-<topic>.md`. Every task names the
+   domain skill it follows (`supabase-migration`, `oracle-edge`).
+5. `superpowers:subagent-driven-development` or `superpowers:executing-plans`.
+6. Verify, then finish (below). Link the spec and plan in your WORKLOG row's *Note*.
+
+Items that span both repos keep their spec and plan in `../spellbinder-app/docs/superpowers/`; this repo's tasks point there.
+
+- **Worktrees:** `git worktree add ../spellbinder-db-<id> -b <id>` (a sibling folder, as in `WORKLOG.md`). Don't use
+  `.worktrees/` or the harness's own worktree tool: other agents and the log can't see those. Setup: `npm install` and
+  copy `.env` from the main checkout. Baseline: `npm run test:db`, but only if no one else is using the local stack.
+- **Test first:** `superpowers:test-driven-development` applies to migrations: write the pgTAP cases for a rule before
+  the policy, function or trigger, and watch them fail. Same for `scripts/`.
+- **Verification:** `db:reset`, `test:db` and `db:lint` are the evidence `superpowers:verification-before-completion`
+  asks for. Only one local Supabase stack runs per machine (fixed ports): coordinate `db:reset` / `test:db` through the log.
+- **Review:** `superpowers:requesting-code-review` between tasks.
+- **Finishing:** in `superpowers:finishing-a-development-branch`, always pick **"Keep the branch as-is"**. Don't merge,
+  push or open a PR unless the user asks for it in this session, and never push to the remote project (see Hard rules).
+  Keep the worktree, then set your WORKLOG row to `ready to merge`.
+- **Parallel agents** (`superpowers:dispatching-parallel-agents`): only for items whose files and migration numbers
+  don't overlap. Each agent claims its own row and worktree.
 
 ## Hard rules
 - **Never run anything against the remote project without asking first:** `db push`, `config push`, `functions deploy`,
@@ -50,6 +76,7 @@ Several agents may work on this repo and `../spellbinder-app` at the same time. 
 - Tables rows change in have `updated_at`, stamped by a `before update` trigger (`public.touch_updated_at()`).
 
 ## Skills (`.claude/skills/`)
+Domain skills: use the matching one inside each plan task. Process skills come from Superpowers (above).
 - `supabase-migration` — any schema change: migration + RLS + tests, then regenerate types in the clients.
 - `oracle-edge` — the Oracle Edge Function and Claude API integration.
 
