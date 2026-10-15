@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local role postgres;
 set local search_path = public, extensions;
-select plan(26);
+select plan(31);
 
 -- ── Setup (as postgres, bypassing RLS) ─────────────────────────────────────────────────────
 insert into auth.users (id, email) values ('cccccccc-0000-4000-a000-000000000000', 'c@test.local');
@@ -24,7 +24,8 @@ insert into batch values (
      "produced_mana": ["G"], "keywords": ["Trample"], "edhrec_rank": 42}]',
   '[{"id": "44444444-0000-4000-a000-000000000001", "card_id": "33333333-0000-4000-a000-000000000000", "set": "tst",
      "collector_number": "1", "rarity": "rare", "artist": "A. Artist", "image_uris": {"normal": "https://x/1.jpg"},
-     "finishes": ["nonfoil", "foil"], "released_at": "2024-02-09", "set_name": "Test Set", "lang": "en"},
+     "finishes": ["nonfoil", "foil"], "released_at": "2024-02-09", "set_name": "Test Set", "lang": "en",
+     "flavor_name": "Godzilla, Test Monster", "promo": true},
     {"id": "44444444-0000-4000-a000-000000000002", "card_id": "33333333-0000-4000-a000-000000000000", "set": "tst",
      "collector_number": "2", "rarity": "rare", "finishes": ["etched"]}]',
   '[{"version_id": "44444444-0000-4000-a000-000000000001", "source": "scryfall", "usd": "1.50", "eur": "1.20",
@@ -83,6 +84,12 @@ select is(
   (select (released_at, set_name, lang, digital)::text from public.card_versions
    where id = '44444444-0000-4000-a000-000000000002'),
   '(,,,f)', 'a version sent without them has no date or language and is not digital');
+select is(
+  (select (flavor_name, promo)::text from public.card_versions where id = '44444444-0000-4000-a000-000000000001'),
+  '("Godzilla, Test Monster",t)', 'the flavor name and promo flag are stored (0009)');
+select is(
+  (select (flavor_name, promo)::text from public.card_versions where id = '44444444-0000-4000-a000-000000000002'),
+  '(,f)', 'a version sent without them has no flavor name and is not a promo');
 
 -- ── Unchanged rows are left alone; prices are always refreshed ─────────────────────────────
 update public.cards set updated_at = '2026-01-01' where id = '33333333-0000-4000-a000-000000000000';
@@ -133,6 +140,23 @@ select is(
   (select public.sync_card_batch(card_rows, version_rows, price_rows) from batch), 4,
   'a new EDHREC rank and a new set name count as changes too');
 set local role postgres;
+
+update batch set version_rows = jsonb_set(version_rows, '{0,promo}', 'false');
+set local role service_role;
+select is(
+  (select public.sync_card_batch(card_rows, version_rows, price_rows) from batch), 3,
+  'a changed promo flag rewrites the version (1 version, plus the 2 prices)');
+set local role postgres;
+
+update batch set version_rows = jsonb_set(version_rows, '{0,flavor_name}', '"Godzilla, Other Monster"');
+set local role service_role;
+select is(
+  (select public.sync_card_batch(card_rows, version_rows, price_rows) from batch), 3,
+  'a changed flavor name rewrites the version (1 version, plus the 2 prices)');
+set local role postgres;
+select is(
+  (select (flavor_name, promo)::text from public.card_versions where id = '44444444-0000-4000-a000-000000000001'),
+  '("Godzilla, Other Monster",f)', 'the changed flavor name and promo flag are stored');
 
 -- ── A version never moves to another card ──────────────────────────────────────────────────
 insert into public.cards (id, name, type_line) values ('33333333-0000-4000-a000-000000000009', 'Card L', 'Instant');
