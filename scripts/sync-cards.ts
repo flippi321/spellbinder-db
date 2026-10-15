@@ -163,6 +163,9 @@ function toRows(c: Json) {
       set_name: c.set_name ?? null,
       lang: c.lang ?? null,
       digital: c.digital ?? false,
+      // Double-faced printings keep the front face's flavor name (the face the scanner reads first).
+      flavor_name: c.flavor_name ?? faces?.[0]?.flavor_name ?? null,
+      promo: c.promo ?? false,
     },
     price: {
       version_id: c.id,
