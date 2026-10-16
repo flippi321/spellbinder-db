@@ -9,7 +9,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local role postgres;
 set local search_path = public, extensions;
-select plan(39);
+select plan(60);
 
 -- ── Setup (as postgres, bypassing RLS) ─────────────────────────────────────────────────────
 insert into auth.users (id, email) values
@@ -193,6 +193,136 @@ select is(
         private.game_night_occurrence('2026-10-15 17:00Z', 'Europe/Oslo', 'monthly', 2, 'date', 0)],
   array['2026-10-15 17:00Z', '2026-10-15 17:00Z', '2026-10-15 17:00Z']::timestamptz[],
   'occurrence 0 is the first night for every rule');
+
+-- ══ plan_game_night and top_up_game_nights ═════════════════════════════════════════════════
+-- Start from an empty group.
+set local role postgres;
+delete from public.game_nights;
+delete from public.game_night_series;
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub": "aaaaaaaa-0000-4000-a000-000000000000", "role": "authenticated"}', true);
+
+-- A one-off.
+select set_config('test.oneoff', (
+  select id::text from public.plan_game_night(
+    group_id => '99999999-0000-4000-a000-000000000001', title => 'Cube night', starts_at => now() + interval '5 days',
+    location => 'A''s place', notes => 'Bring sleeves', bracket_min => 2::smallint, bracket_max => 3::smallint,
+    repeat => null)), true);
+select is(
+  (select (title, location, notes, bracket_min, bracket_max, series_id, occurrence, created_by)::text
+   from public.game_nights where id = current_setting('test.oneoff')::uuid),
+  '("Cube night","A''s place","Bring sleeves",2,3,,,aaaaaaaa-0000-4000-a000-000000000000)',
+  'plan_game_night without a repeat makes one night as given');
+
+-- A weekly series starting tomorrow: nights up to two months ahead.
+select set_config('test.weekly_start', (now() + interval '1 day')::text, true);
+select set_config('test.weekly_count', (
+  select count(*)::text from generate_series(0, 20) n
+  where private.game_night_occurrence(current_setting('test.weekly_start')::timestamptz, 'Europe/Oslo', 'weekly', 1, null, n)
+        <= now() + interval '2 months'), true);
+select set_config('test.first', (
+  select id::text from public.plan_game_night(
+    group_id => '99999999-0000-4000-a000-000000000001', title => 'Thursday Commander',
+    starts_at => current_setting('test.weekly_start')::timestamptz, location => 'Jonas''s',
+    bracket_min => 2::smallint, bracket_max => 3::smallint,
+    repeat => '{"frequency": "weekly", "repeat_every": 1, "time_zone": "Europe/Oslo"}')), true);
+select set_config('test.series', (select series_id::text from public.game_nights where id = current_setting('test.first')::uuid), true);
+
+select is(
+  (select (occurrence, starts_at = current_setting('test.weekly_start')::timestamptz)::text
+   from public.game_nights where id = current_setting('test.first')::uuid),
+  '(0,t)', 'plan_game_night with a repeat returns occurrence 0');
+select is(
+  (select count(*)::text from public.game_nights where series_id = current_setting('test.series')::uuid),
+  current_setting('test.weekly_count'), 'a weekly series has its nights up to two months ahead');
+select is(
+  (select count(*)::int from public.game_nights
+   where series_id = current_setting('test.series')::uuid and title = 'Thursday Commander' and location = 'Jonas''s'
+     and bracket_min = 2 and bracket_max = 3),
+  current_setting('test.weekly_count')::int, 'every night of the series has its title, place and brackets');
+select is(
+  (select (generated_through, frequency, repeat_every, monthly_by, time_zone)::text
+   from public.game_night_series where id = current_setting('test.series')::uuid),
+  format('(%s,weekly,1,,Europe/Oslo)', current_setting('test.weekly_count')::int - 1),
+  'the series remembers its rule and the last occurrence it created');
+select is(
+  (select max(starts_at) from public.game_nights where series_id = current_setting('test.series')::uuid),
+  private.game_night_occurrence(current_setting('test.weekly_start')::timestamptz, 'Europe/Oslo', 'weekly', 1, null,
+    current_setting('test.weekly_count')::int - 1),
+  'the last night falls on the series'' date for its number');
+
+-- Idempotent.
+select is(public.top_up_game_nights('99999999-0000-4000-a000-000000000001'), 0, 'a top-up right after planning creates nothing');
+select is(public.top_up_game_nights('99999999-0000-4000-a000-000000000001'), 0, 'a second top-up creates nothing');
+select is(
+  (select count(*)::text from public.game_nights where series_id = current_setting('test.series')::uuid),
+  current_setting('test.weekly_count'), 'top-ups never duplicate a night');
+
+-- A night a member deleted stays deleted.
+select set_config('request.jwt.claims', '{"sub": "bbbbbbbb-0000-4000-a000-000000000000", "role": "authenticated"}', true);
+delete from public.game_nights where series_id = current_setting('test.series')::uuid and occurrence = 2;
+select is(public.top_up_game_nights('99999999-0000-4000-a000-000000000001'), 0, 'a top-up after a delete creates nothing');
+select is(
+  (select count(*)::int from public.game_nights where series_id = current_setting('test.series')::uuid and occurrence = 2), 0,
+  'a deleted night is not recreated');
+
+-- Time passing (simulated): the last three nights don't exist yet, so a top-up creates exactly those.
+set local role postgres;
+delete from public.game_nights
+where series_id = current_setting('test.series')::uuid and occurrence > current_setting('test.weekly_count')::int - 4;
+update public.game_night_series set generated_through = generated_through - 3 where id = current_setting('test.series')::uuid;
+set local role authenticated;
+select is(public.top_up_game_nights('99999999-0000-4000-a000-000000000001'), 3, 'a top-up creates the missing nights');
+select is(
+  (select (count(*), count(distinct occurrence))::text from public.game_nights where series_id = current_setting('test.series')::uuid),
+  format('(%s,%s)', current_setting('test.weekly_count')::int - 1, current_setting('test.weekly_count')::int - 1),
+  'each night once (all but the deleted one)');
+
+-- A lost generated_through still never duplicates a night.
+set local role postgres;
+update public.game_night_series set generated_through = generated_through - 3 where id = current_setting('test.series')::uuid;
+set local role authenticated;
+select is(public.top_up_game_nights('99999999-0000-4000-a000-000000000001'), 0,
+  'a top-up over nights that exist creates nothing');
+select is(
+  (select generated_through from public.game_night_series where id = current_setting('test.series')::uuid),
+  current_setting('test.weekly_count')::int - 1, 'and catches generated_through up');
+
+-- Other repeats.
+select set_config('test.monthly', (
+  select series_id::text from public.plan_game_night(
+    group_id => '99999999-0000-4000-a000-000000000001', title => 'Monthly', starts_at => now() + interval '3 days',
+    repeat => '{"frequency": "monthly", "repeat_every": 2, "time_zone": "Europe/Oslo"}')), true);
+select is(
+  (select (frequency, repeat_every, monthly_by)::text from public.game_night_series where id = current_setting('test.monthly')::uuid),
+  '(monthly,2,weekday)', 'a monthly series goes by weekday unless it says otherwise');
+select set_config('test.far', (
+  select series_id::text from public.plan_game_night(
+    group_id => '99999999-0000-4000-a000-000000000001', title => 'Far off', starts_at => now() + interval '3 months',
+    repeat => '{"frequency": "weekly", "repeat_every": 1, "time_zone": "Europe/Oslo"}')), true);
+select is(
+  (select count(*)::int from public.game_nights where series_id = current_setting('test.far')::uuid),
+  1, 'a series that starts beyond two months still gets its first night');
+
+-- Errors.
+select throws_ok(
+  $$ select public.plan_game_night(group_id => '99999999-0000-4000-a000-000000000001', title => 'Mars',
+       starts_at => now(), repeat => '{"frequency": "weekly", "repeat_every": 1, "time_zone": "Mars/Olympus"}') $$,
+  'P0001', 'Unknown time zone', 'an unknown time zone is refused');
+
+set local role postgres;
+select set_config('test.g1_nights', (select count(*)::text from public.game_nights), true);
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub": "cccccccc-0000-4000-a000-000000000000", "role": "authenticated"}', true);
+select throws_ok(
+  $$ select public.plan_game_night(group_id => '99999999-0000-4000-a000-000000000001', title => 'Sneaky', starts_at => now(),
+       repeat => '{"frequency": "weekly", "repeat_every": 1, "time_zone": "Europe/Oslo"}') $$,
+  '42501', 'Not a member of this playgroup', 'a stranger cannot plan a night in the group');
+select throws_ok(
+  $$ select public.top_up_game_nights('99999999-0000-4000-a000-000000000001') $$,
+  '42501', 'Not a member of this playgroup', 'a stranger cannot top up the group');
+set local role postgres;
+select is((select count(*)::text from public.game_nights), current_setting('test.g1_nights'), 'and nothing was added');
 
 set local role postgres;
 select * from finish();

@@ -195,3 +195,147 @@ revoke execute on function private.game_night_occurrence(timestamptz, text, text
   from public, anon;
 grant execute on function private.game_night_occurrence(timestamptz, text, text, integer, text, integer)
   to authenticated;
+
+-- ── Planning and topping up ────────────────────────────────────────────────────────────────
+-- Inserts a series from a night's fields and a repeat rule ({frequency, repeat_every, monthly_by, time_zone}). Keys
+-- the rule leaves out come from `fallback` (the series it replaces), then from the defaults: every 1, by weekday.
+create or replace function private.insert_game_night_series(
+  group_id uuid, title text, location text, notes text, bracket_min smallint, bracket_max smallint,
+  starts_at timestamptz, rule jsonb, generated_through integer, fallback public.game_night_series default null
+)
+returns public.game_night_series
+language plpgsql set search_path = ''
+as $$
+declare
+  rule_frequency text := coalesce(rule ->> 'frequency', fallback.frequency);
+  rule_time_zone text := coalesce(rule ->> 'time_zone', fallback.time_zone);
+  created public.game_night_series;
+begin
+  if rule_time_zone is null
+     or not exists (select 1 from pg_catalog.pg_timezone_names z where z.name = rule_time_zone) then
+    raise exception 'Unknown time zone';
+  end if;
+
+  insert into public.game_night_series (
+    playgroup_id, title, location, notes, bracket_min, bracket_max, starts_at, time_zone,
+    frequency, repeat_every, monthly_by, generated_through
+  )
+  values (
+    insert_game_night_series.group_id, insert_game_night_series.title, insert_game_night_series.location,
+    insert_game_night_series.notes, insert_game_night_series.bracket_min, insert_game_night_series.bracket_max,
+    insert_game_night_series.starts_at, rule_time_zone, rule_frequency,
+    coalesce((rule ->> 'repeat_every')::smallint, fallback.repeat_every, 1),
+    case when rule_frequency = 'monthly' then
+      coalesce(rule ->> 'monthly_by', case when fallback.frequency = 'monthly' then fallback.monthly_by end, 'weekday')
+    end,
+    insert_game_night_series.generated_through
+  )
+  returning * into created;
+  return created;
+end;
+$$;
+
+-- Creates the missing nights of every running series in the group, up to two months from now. Safe to run twice or
+-- at the same time from two phones: series rows are locked while topped up, each occurrence is unique per series,
+-- and generated_through means a night someone deleted is not created again. Returns how many nights it created.
+create or replace function public.top_up_game_nights(group_id uuid)
+returns integer
+language plpgsql security invoker set search_path = ''
+as $$
+declare
+  horizon timestamptz := now() + interval '2 months';
+  series public.game_night_series;
+  n integer;
+  night_starts_at timestamptz;
+  inserted integer;
+  created integer := 0;
+begin
+  if not private.is_playgroup_member(top_up_game_nights.group_id) then
+    raise exception 'Not a member of this playgroup' using errcode = '42501';
+  end if;
+
+  for series in
+    select * from public.game_night_series s
+    where s.playgroup_id = top_up_game_nights.group_id
+      and (s.ended_after is null or s.generated_through < s.ended_after)
+    order by s.id
+    for update
+  loop
+    n := series.generated_through + 1;
+    loop
+      exit when series.ended_after is not null and n > series.ended_after;
+      night_starts_at := private.game_night_occurrence(
+        series.starts_at, series.time_zone, series.frequency, series.repeat_every, series.monthly_by, n);
+      exit when night_starts_at > horizon;
+
+      insert into public.game_nights (
+        playgroup_id, title, starts_at, location, notes, bracket_min, bracket_max, series_id, occurrence
+      )
+      values (
+        series.playgroup_id, series.title, night_starts_at, series.location, series.notes,
+        series.bracket_min, series.bracket_max, series.id, n
+      )
+      on conflict (series_id, occurrence) do nothing;
+      get diagnostics inserted = row_count;
+      created := created + inserted;
+      n := n + 1;
+    end loop;
+
+    if n - 1 > series.generated_through then
+      update public.game_night_series s set generated_through = n - 1 where s.id = series.id;
+    end if;
+  end loop;
+
+  return created;
+end;
+$$;
+
+-- Plans a night. `repeat` is null for a one-off, or {frequency: weekly|monthly, repeat_every: 1|2,
+-- monthly_by: weekday|date (monthly only, default weekday), time_zone: IANA name}. A repeat makes the series and its
+-- nights up to two months ahead. Returns the (first) night.
+create or replace function public.plan_game_night(
+  group_id uuid, title text, starts_at timestamptz, location text default null, notes text default null,
+  bracket_min smallint default null, bracket_max smallint default null, repeat jsonb default null
+)
+returns public.game_nights
+language plpgsql security invoker set search_path = ''
+as $$
+declare
+  night_title text := coalesce(plan_game_night.title, 'Game night');
+  series public.game_night_series;
+  night public.game_nights;
+begin
+  if not private.is_playgroup_member(plan_game_night.group_id) then
+    raise exception 'Not a member of this playgroup' using errcode = '42501';
+  end if;
+
+  if plan_game_night.repeat is not null and jsonb_typeof(plan_game_night.repeat) <> 'null' then
+    series := private.insert_game_night_series(
+      plan_game_night.group_id, night_title, plan_game_night.location, plan_game_night.notes,
+      plan_game_night.bracket_min, plan_game_night.bracket_max, plan_game_night.starts_at, plan_game_night.repeat, 0);
+  end if;
+
+  insert into public.game_nights (
+    playgroup_id, title, starts_at, location, notes, bracket_min, bracket_max, series_id, occurrence
+  )
+  values (
+    plan_game_night.group_id, night_title, plan_game_night.starts_at, plan_game_night.location, plan_game_night.notes,
+    plan_game_night.bracket_min, plan_game_night.bracket_max, series.id, case when series.id is not null then 0 end
+  )
+  returning * into night;
+
+  if series.id is not null then
+    perform public.top_up_game_nights(plan_game_night.group_id);
+  end if;
+  return night;
+end;
+$$;
+
+revoke execute on function private.insert_game_night_series(uuid, text, text, text, smallint, smallint, timestamptz,
+  jsonb, integer, public.game_night_series) from public, anon;
+grant execute on function private.insert_game_night_series(uuid, text, text, text, smallint, smallint, timestamptz,
+  jsonb, integer, public.game_night_series) to authenticated;
+revoke execute on function public.top_up_game_nights(uuid),
+  public.plan_game_night(uuid, text, timestamptz, text, text, smallint, smallint, jsonb) from public, anon;
+grant execute on function public.top_up_game_nights(uuid),
+  public.plan_game_night(uuid, text, timestamptz, text, text, smallint, smallint, jsonb) to authenticated;
