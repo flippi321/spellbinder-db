@@ -1,0 +1,549 @@
+-- Game nights get a title, a bracket range, repeating series, soft cancelling and "changed by" (PG-7).
+--
+-- Adds:
+-- - Table game_night_series: one row per repeating plan (weekly or monthly, every 1 or 2), in the creator's IANA time
+--   zone so 19:00 stays 19:00 across daylight saving. `generated_through` is the last occurrence ever created, so a
+--   night a member deleted is never recreated; `ended_after` ends the series after that occurrence.
+-- - game_nights: title, bracket_min / bracket_max (both null = Any), series_id + occurrence (unique per series),
+--   cancelled_at / cancelled_by, updated_by.
+-- - Triggers: updated_by = the signed-in user on every write to either table; cancelled_by = the signed-in user when a
+--   night becomes cancelled; moving a night (a new starts_at) deletes its RSVPs so people answer again.
+-- - RLS: members read, plan, change and delete series; any member (not only the creator) deletes a night.
+-- - RPCs (security invoker, so RLS decides): plan_game_night, top_up_game_nights, change_game_nights,
+--   cancel_game_nights. Nights exist up to two months ahead; the clients call top_up_game_nights on load.
+--
+-- Backward compatible: new table, new nullable columns or columns with defaults, a wider delete policy; today's app
+-- keeps working.
+
+-- ── Series ─────────────────────────────────────────────────────────────────────────────────
+create table public.game_night_series (
+  id                 uuid primary key default gen_random_uuid(),
+  playgroup_id       uuid not null references public.playgroups (id) on delete cascade,
+  title              text not null default 'Game night' check (char_length(title) between 1 and 60),
+  location           text,
+  notes              text,
+  bracket_min        smallint check (bracket_min between 1 and 5),
+  bracket_max        smallint check (bracket_max between 1 and 5),
+  starts_at          timestamptz not null,  -- occurrence 0
+  -- IANA name. The check raises 22023 for an unknown zone, so a row written directly can't break top-up for the group.
+  time_zone          text not null check (('2000-01-01 00:00Z'::timestamptz at time zone time_zone) is not null),
+  frequency          text not null check (frequency in ('weekly', 'monthly')),
+  repeat_every       smallint not null default 1 check (repeat_every in (1, 2)),
+  monthly_by         text check (monthly_by in ('weekday', 'date')),
+  ended_after        integer check (ended_after >= -1),  -- last occurrence; -1 = none; null while running
+  generated_through  integer not null default -1,        -- last occurrence created
+  created_by         uuid not null default auth.uid() references public.profiles (id),
+  updated_by         uuid references public.profiles (id),
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now(),
+  constraint game_night_series_brackets_check
+    check ((bracket_min is null) = (bracket_max is null) and (bracket_min is null or bracket_min <= bracket_max)),
+  constraint game_night_series_monthly_rule_check check ((monthly_by is not null) = (frequency = 'monthly')),
+  -- for the nights' (series_id, playgroup_id) key: a night belongs to a series of its own group
+  constraint game_night_series_id_playgroup_key unique (id, playgroup_id)
+);
+create index game_night_series_playgroup_idx on public.game_night_series (playgroup_id);
+create index game_night_series_created_by_idx on public.game_night_series (created_by);
+create index game_night_series_updated_by_idx on public.game_night_series (updated_by);
+
+create trigger game_night_series_touch_updated_at before update on public.game_night_series
+  for each row execute function public.touch_updated_at();
+
+-- ── New game_nights columns ────────────────────────────────────────────────────────────────
+alter table public.game_nights
+  add column title text not null default 'Game night' check (char_length(title) between 1 and 60),
+  add column bracket_min smallint check (bracket_min between 1 and 5),
+  add column bracket_max smallint check (bracket_max between 1 and 5),
+  add column series_id uuid,
+  add column occurrence integer check (occurrence >= 0),
+  add column cancelled_at timestamptz,
+  add column cancelled_by uuid references public.profiles (id),
+  add column updated_by uuid references public.profiles (id),
+  add constraint game_nights_brackets_check
+    check ((bracket_min is null) = (bracket_max is null) and (bracket_min is null or bracket_min <= bracket_max)),
+  add constraint game_nights_series_occurrence_check check ((series_id is null) = (occurrence is null)),
+  add constraint game_nights_cancelled_check check ((cancelled_at is null) = (cancelled_by is null)),
+  add constraint game_nights_series_fkey
+    foreign key (series_id, playgroup_id) references public.game_night_series (id, playgroup_id)
+    on delete set null (series_id),
+  -- each repeat exists once; also the index for series_id lookups
+  add constraint game_nights_series_occurrence_key unique (series_id, occurrence);
+create index game_nights_cancelled_by_idx on public.game_nights (cancelled_by);
+create index game_nights_updated_by_idx on public.game_nights (updated_by);
+
+-- ── Triggers ───────────────────────────────────────────────────────────────────────────────
+-- Who wrote last. Without a signed-in user (service role, migrations) the row keeps what it had.
+create or replace function private.stamp_updated_by()
+returns trigger
+language plpgsql set search_path = ''
+as $$
+begin
+  new.updated_by := coalesce((select auth.uid()), new.updated_by);
+  return new;
+end;
+$$;
+
+create trigger game_nights_stamp_updated_by before insert or update on public.game_nights
+  for each row execute function private.stamp_updated_by();
+create trigger game_night_series_stamp_updated_by before insert or update on public.game_night_series
+  for each row execute function private.stamp_updated_by();
+
+-- Who cancelled: the signed-in user when a night becomes cancelled, and it doesn't change while it stays cancelled.
+create or replace function private.stamp_cancelled_by()
+returns trigger
+language plpgsql set search_path = ''
+as $$
+begin
+  if new.cancelled_at is not null then
+    if tg_op = 'UPDATE' and old.cancelled_at is not null then
+      new.cancelled_by := old.cancelled_by;
+    else
+      new.cancelled_by := coalesce((select auth.uid()), new.cancelled_by);
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger game_nights_stamp_cancelled_by before insert or update on public.game_nights
+  for each row execute function private.stamp_cancelled_by();
+
+-- A night whose series is deleted stays, as a one-off (the foreign key clears series_id; this clears occurrence).
+create or replace function private.detach_game_night()
+returns trigger
+language plpgsql set search_path = ''
+as $$
+begin
+  if new.series_id is null then
+    new.occurrence := null;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger game_nights_detach before update of series_id on public.game_nights
+  for each row execute function private.detach_game_night();
+
+-- A night that moved keeps no RSVPs: people answer again. Security definer, because RLS only lets each member delete
+-- their own RSVP.
+create or replace function private.clear_rsvps_on_move()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+begin
+  delete from public.rsvps where game_night_id = new.id;
+  return null;
+end;
+$$;
+
+create trigger game_nights_clear_rsvps_on_move after update of starts_at on public.game_nights
+  for each row when (new.starts_at is distinct from old.starts_at)
+  execute function private.clear_rsvps_on_move();
+
+revoke execute on function private.stamp_updated_by(), private.stamp_cancelled_by(), private.detach_game_night(),
+  private.clear_rsvps_on_move() from public, anon, authenticated;
+
+-- ── RLS ────────────────────────────────────────────────────────────────────────────────────
+alter table public.game_night_series enable row level security;
+
+create policy "game_night_series: members read" on public.game_night_series
+  for select to authenticated using (private.is_playgroup_member(playgroup_id));
+create policy "game_night_series: members plan" on public.game_night_series
+  for insert to authenticated
+  with check (private.is_playgroup_member(playgroup_id) and created_by = (select auth.uid()));
+create policy "game_night_series: members update" on public.game_night_series
+  for update to authenticated
+  using (private.is_playgroup_member(playgroup_id)) with check (private.is_playgroup_member(playgroup_id));
+create policy "game_night_series: members delete" on public.game_night_series
+  for delete to authenticated using (private.is_playgroup_member(playgroup_id));
+
+-- Anyone in the group may delete a night (groups run on trust; the app soft-cancels through cancel_game_nights).
+drop policy if exists "game_nights: creator deletes" on public.game_nights;
+create policy "game_nights: members delete" on public.game_nights
+  for delete to authenticated using (private.is_playgroup_member(playgroup_id));
+
+revoke all on public.game_night_series from anon;
+grant select, insert, update, delete on public.game_night_series to authenticated;
+
+-- ── Date rules ─────────────────────────────────────────────────────────────────────────────
+-- The start of occurrence n of a series whose occurrence 0 is first_starts_at. Computed in the series' local time, so
+-- 19:00 stays 19:00 across daylight saving.
+-- - weekly: every repeat_every weeks, same weekday and time.
+-- - monthly by date: the first night's day of the month; in a shorter month, its last day.
+-- - monthly by weekday: the first night's nth weekday ("2nd Tuesday"); a 5th weekday means "the last <weekday>".
+create or replace function private.game_night_occurrence(
+  first_starts_at timestamptz, time_zone text, frequency text, repeat_every integer, monthly_by text, n integer
+)
+returns timestamptz
+language plpgsql stable set search_path = ''
+as $$
+declare
+  first_local timestamp := first_starts_at at time zone time_zone;
+  month_start date;
+  month_end date;
+  weekday integer;
+  week integer;
+  target date;
+begin
+  if n = 0 then
+    return first_starts_at;
+  end if;
+
+  if frequency = 'weekly' then
+    return (first_local + make_interval(days => 7 * n * repeat_every)) at time zone time_zone;
+  end if;
+
+  month_start := (date_trunc('month', first_local) + make_interval(months => n * repeat_every))::date;
+  month_end := (month_start + interval '1 month')::date - 1;
+
+  if monthly_by = 'date' then
+    target := least(month_start + (extract(day from first_local)::integer - 1), month_end);
+  else
+    weekday := extract(dow from first_local)::integer;
+    week := (extract(day from first_local)::integer - 1) / 7 + 1;
+    if week = 5 then
+      target := month_end - (extract(dow from month_end)::integer - weekday + 7) % 7;
+    else
+      target := month_start + (weekday - extract(dow from month_start)::integer + 7) % 7 + 7 * (week - 1);
+    end if;
+  end if;
+
+  return (target + first_local::time) at time zone time_zone;
+end;
+$$;
+
+revoke execute on function private.game_night_occurrence(timestamptz, text, text, integer, text, integer)
+  from public, anon;
+grant execute on function private.game_night_occurrence(timestamptz, text, text, integer, text, integer)
+  to authenticated;
+
+-- ── Planning and topping up ────────────────────────────────────────────────────────────────
+-- Inserts a series from a night's fields and a repeat rule ({frequency, repeat_every, monthly_by, time_zone}). Keys
+-- the rule leaves out come from `fallback` (the series it replaces), then from the defaults: every 1, by weekday.
+create or replace function private.insert_game_night_series(
+  group_id uuid, title text, location text, notes text, bracket_min smallint, bracket_max smallint,
+  starts_at timestamptz, rule jsonb, generated_through integer, fallback public.game_night_series default null
+)
+returns public.game_night_series
+language plpgsql set search_path = ''
+as $$
+declare
+  rule_frequency text := coalesce(rule ->> 'frequency', fallback.frequency);
+  rule_time_zone text := coalesce(rule ->> 'time_zone', fallback.time_zone);
+  created public.game_night_series;
+begin
+  if rule_time_zone is null
+     or not exists (select 1 from pg_catalog.pg_timezone_names z where z.name = rule_time_zone) then
+    raise exception 'Unknown time zone';
+  end if;
+
+  insert into public.game_night_series (
+    playgroup_id, title, location, notes, bracket_min, bracket_max, starts_at, time_zone,
+    frequency, repeat_every, monthly_by, generated_through
+  )
+  values (
+    insert_game_night_series.group_id, insert_game_night_series.title, insert_game_night_series.location,
+    insert_game_night_series.notes, insert_game_night_series.bracket_min, insert_game_night_series.bracket_max,
+    insert_game_night_series.starts_at, rule_time_zone, rule_frequency,
+    coalesce((rule ->> 'repeat_every')::smallint, fallback.repeat_every, 1),
+    case when rule_frequency = 'monthly' then
+      coalesce(rule ->> 'monthly_by', case when fallback.frequency = 'monthly' then fallback.monthly_by end, 'weekday')
+    end,
+    insert_game_night_series.generated_through
+  )
+  returning * into created;
+  return created;
+end;
+$$;
+
+-- Creates the missing nights of every running series in the group, up to two months from now. Safe to run twice or
+-- at the same time from two phones: series rows are locked while topped up, each occurrence is unique per series,
+-- and generated_through means a night someone deleted is not created again. Returns how many nights it created.
+create or replace function public.top_up_game_nights(group_id uuid)
+returns integer
+language plpgsql security invoker set search_path = ''
+as $$
+declare
+  horizon timestamptz := now() + interval '2 months';
+  series public.game_night_series;
+  n integer;
+  night_starts_at timestamptz;
+  inserted integer;
+  created integer := 0;
+begin
+  if not private.is_playgroup_member(top_up_game_nights.group_id) then
+    raise exception 'Not a member of this playgroup' using errcode = '42501';
+  end if;
+
+  for series in
+    select * from public.game_night_series s
+    where s.playgroup_id = top_up_game_nights.group_id
+      and (s.ended_after is null or s.generated_through < s.ended_after)
+    order by s.id
+    for update
+  loop
+    n := series.generated_through + 1;
+    loop
+      exit when series.ended_after is not null and n > series.ended_after;
+      night_starts_at := private.game_night_occurrence(
+        series.starts_at, series.time_zone, series.frequency, series.repeat_every, series.monthly_by, n);
+      exit when night_starts_at > horizon;
+
+      -- Nights that have already passed are skipped (but counted as generated).
+      if night_starts_at >= now() then
+        insert into public.game_nights (
+          playgroup_id, title, starts_at, location, notes, bracket_min, bracket_max, series_id, occurrence
+        )
+        values (
+          series.playgroup_id, series.title, night_starts_at, series.location, series.notes,
+          series.bracket_min, series.bracket_max, series.id, n
+        )
+        on conflict (series_id, occurrence) do nothing;
+        get diagnostics inserted = row_count;
+        created := created + inserted;
+      end if;
+      n := n + 1;
+    end loop;
+
+    if n - 1 > series.generated_through then
+      update public.game_night_series s set generated_through = n - 1 where s.id = series.id;
+    end if;
+  end loop;
+
+  return created;
+end;
+$$;
+
+-- Plans a night. `repeat` is null for a one-off, or {frequency: weekly|monthly, repeat_every: 1|2,
+-- monthly_by: weekday|date (monthly only, default weekday), time_zone: IANA name}. A repeat makes the series and its
+-- nights up to two months ahead. Returns the (first) night.
+create or replace function public.plan_game_night(
+  group_id uuid, title text, starts_at timestamptz, location text default null, notes text default null,
+  bracket_min smallint default null, bracket_max smallint default null, repeat jsonb default null
+)
+returns public.game_nights
+language plpgsql security invoker set search_path = ''
+as $$
+declare
+  night_title text := coalesce(plan_game_night.title, 'Game night');
+  series public.game_night_series;
+  night public.game_nights;
+begin
+  if not private.is_playgroup_member(plan_game_night.group_id) then
+    raise exception 'Not a member of this playgroup' using errcode = '42501';
+  end if;
+
+  if plan_game_night.repeat is not null and jsonb_typeof(plan_game_night.repeat) <> 'null' then
+    series := private.insert_game_night_series(
+      plan_game_night.group_id, night_title, plan_game_night.location, plan_game_night.notes,
+      plan_game_night.bracket_min, plan_game_night.bracket_max, plan_game_night.starts_at, plan_game_night.repeat, 0);
+  end if;
+
+  insert into public.game_nights (
+    playgroup_id, title, starts_at, location, notes, bracket_min, bracket_max, series_id, occurrence
+  )
+  values (
+    plan_game_night.group_id, night_title, plan_game_night.starts_at, plan_game_night.location, plan_game_night.notes,
+    plan_game_night.bracket_min, plan_game_night.bracket_max, series.id, case when series.id is not null then 0 end
+  )
+  returning * into night;
+
+  if series.id is not null then
+    perform public.top_up_game_nights(plan_game_night.group_id);
+  end if;
+  return night;
+end;
+$$;
+
+revoke execute on function private.insert_game_night_series(uuid, text, text, text, smallint, smallint, timestamptz,
+  jsonb, integer, public.game_night_series) from public, anon;
+grant execute on function private.insert_game_night_series(uuid, text, text, text, smallint, smallint, timestamptz,
+  jsonb, integer, public.game_night_series) to authenticated;
+revoke execute on function public.top_up_game_nights(uuid),
+  public.plan_game_night(uuid, text, timestamptz, text, text, smallint, smallint, jsonb) from public, anon;
+grant execute on function public.top_up_game_nights(uuid),
+  public.plan_game_night(uuid, text, timestamptz, text, text, smallint, smallint, jsonb) to authenticated;
+
+-- ── Changing and cancelling ────────────────────────────────────────────────────────────────
+-- Finds a night the caller can see and locks it for a change. The group's series are locked first, in id order (the
+-- order top-up takes them in), so two members changing the same series take turns instead of deadlocking, and the
+-- night is read again after the wait.
+create or replace function private.lock_game_night(night_id uuid)
+returns public.game_nights
+language plpgsql set search_path = ''
+as $$
+declare
+  night public.game_nights;
+begin
+  select * into night from public.game_nights g where g.id = lock_game_night.night_id;
+  if not found then
+    raise exception 'Game night not found';
+  end if;
+  perform 1 from public.game_night_series s where s.playgroup_id = night.playgroup_id order by s.id for update;
+  select * into night from public.game_nights g where g.id = lock_game_night.night_id for update;
+  if not found then
+    raise exception 'Game night not found';
+  end if;
+  return night;
+end;
+$$;
+
+revoke execute on function private.lock_game_night(uuid) from public, anon;
+grant execute on function private.lock_game_night(uuid) to authenticated;
+
+-- Changes a night (scope 'this') or a night and every later night of its series (scope 'later').
+-- `patch` keys, each optional: title, starts_at, location, notes, bracket_min + bracket_max (together; null = Any),
+-- and with 'later' only, repeat ({frequency, repeat_every, monthly_by, time_zone}; keys left out stay as they were;
+-- null stops repeating).
+--
+-- 'later' on night k of a series ends that series after k - 1 and starts a new one at night k as patched. The
+-- non-cancelled nights from k on move to the new series as occurrence (old - k), on the new series' dates and with its
+-- title, place, notes and brackets, so a later night changed on its own before is overwritten too. Cancelled nights
+-- stay on the old series as they are, and the new series skips their numbers, so a cancelled week stays cancelled.
+-- Moved nights that now fall more than two months ahead are removed (top-up makes them again in time); nights whose
+-- time didn't change keep their RSVPs. With "repeat": null, night k becomes a one-off and the later nights are
+-- removed. 'later' with a repeat on a one-off makes it occurrence 0 of a new series; without one, it is like 'this'.
+create or replace function public.change_game_nights(night_id uuid, scope text, patch jsonb)
+returns void
+language plpgsql security invoker set search_path = ''
+as $$
+declare
+  night public.game_nights;
+  old_series public.game_night_series;
+  new_series public.game_night_series;
+  k integer;
+begin
+  if change_game_nights.scope is null or change_game_nights.scope not in ('this', 'later') then
+    raise exception 'Unknown scope';
+  end if;
+  night := private.lock_game_night(change_game_nights.night_id);
+  patch := coalesce(patch, '{}'::jsonb);
+  if patch ? 'repeat' and change_game_nights.scope = 'this' then
+    raise exception 'Repeat changes need scope later';
+  end if;
+  if (patch ? 'bracket_min') <> (patch ? 'bracket_max') then
+    raise exception 'bracket_min and bracket_max go together';
+  end if;
+
+  -- The night as patched.
+  if patch ? 'title' then night.title := patch ->> 'title'; end if;
+  if patch ? 'starts_at' then night.starts_at := (patch ->> 'starts_at')::timestamptz; end if;
+  if patch ? 'location' then night.location := patch ->> 'location'; end if;
+  if patch ? 'notes' then night.notes := patch ->> 'notes'; end if;
+  if patch ? 'bracket_min' then
+    night.bracket_min := (patch ->> 'bracket_min')::smallint;
+    night.bracket_max := (patch ->> 'bracket_max')::smallint;
+  end if;
+
+  -- Just this night (or a one-off that doesn't start repeating).
+  if change_game_nights.scope = 'this'
+     or (night.series_id is null and coalesce(jsonb_typeof(patch -> 'repeat'), 'null') = 'null') then
+    update public.game_nights g
+    set title = night.title, starts_at = night.starts_at, location = night.location, notes = night.notes,
+        bracket_min = night.bracket_min, bracket_max = night.bracket_max
+    where g.id = night.id;
+    return;
+  end if;
+
+  -- A one-off starts repeating.
+  if night.series_id is null then
+    new_series := private.insert_game_night_series(
+      night.playgroup_id, night.title, night.location, night.notes, night.bracket_min, night.bracket_max,
+      night.starts_at, patch -> 'repeat', 0);
+    update public.game_nights g
+    set title = night.title, starts_at = night.starts_at, location = night.location, notes = night.notes,
+        bracket_min = night.bracket_min, bracket_max = night.bracket_max, series_id = new_series.id, occurrence = 0
+    where g.id = night.id;
+    perform public.top_up_game_nights(night.playgroup_id);
+    return;
+  end if;
+
+  -- This and later in a series: end the old series before night k.
+  k := night.occurrence;
+  select * into old_series from public.game_night_series s where s.id = night.series_id;
+  update public.game_night_series s
+  set ended_after = least(coalesce(s.ended_after, k - 1), k - 1)
+  where s.id = old_series.id;
+
+  -- Stop repeating: night k becomes a one-off, and the later nights go.
+  if patch ? 'repeat' and jsonb_typeof(patch -> 'repeat') = 'null' then
+    delete from public.game_nights g
+    where g.series_id = old_series.id and g.occurrence > k and g.cancelled_at is null;
+    update public.game_nights g
+    set title = night.title, starts_at = night.starts_at, location = night.location, notes = night.notes,
+        bracket_min = night.bracket_min, bracket_max = night.bracket_max, series_id = null, occurrence = null
+    where g.id = night.id;
+    return;
+  end if;
+
+  -- A new series from night k as patched; the old series' rule fills what the patch leaves out.
+  new_series := private.insert_game_night_series(
+    night.playgroup_id, night.title, night.location, night.notes, night.bracket_min, night.bracket_max,
+    night.starts_at, patch -> 'repeat', -1, old_series);
+
+  update public.game_nights g
+  set series_id = new_series.id,
+      occurrence = g.occurrence - k,
+      starts_at = private.game_night_occurrence(new_series.starts_at, new_series.time_zone, new_series.frequency,
+                                                new_series.repeat_every, new_series.monthly_by, g.occurrence - k),
+      title = new_series.title, location = new_series.location, notes = new_series.notes,
+      bracket_min = new_series.bracket_min, bracket_max = new_series.bracket_max
+  where g.series_id = old_series.id and g.occurrence >= k and (g.cancelled_at is null or g.id = night.id);
+
+  delete from public.game_nights g
+  where g.series_id = new_series.id and g.occurrence > 0 and g.starts_at > now() + interval '2 months';
+
+  -- The new series has generated what the old one had from k on, cut at the horizon, so a cancelled or deleted night
+  -- (even the last one) stays a gap and only nights pushed past the horizon are made again later.
+  update public.game_night_series s
+  set generated_through = greatest(
+        coalesce((select max(g.occurrence) from public.game_nights g where g.series_id = s.id), 0),
+        coalesce((select max(n) from generate_series(0, old_series.generated_through - k) n
+                  where private.game_night_occurrence(s.starts_at, s.time_zone, s.frequency, s.repeat_every,
+                                                      s.monthly_by, n) <= now() + interval '2 months'), 0)),
+      ended_after = case when old_series.ended_after is not null then greatest(old_series.ended_after - k, -1) end
+  where s.id = new_series.id;
+
+  perform public.top_up_game_nights(night.playgroup_id);
+end;
+$$;
+
+-- Cancels a night (scope 'this') or a night and every later night of its series, ending the series there
+-- (scope 'later'; on a one-off it is the same as 'this'). Cancelled nights stay, with who cancelled them.
+-- Returns how many nights it cancelled.
+create or replace function public.cancel_game_nights(night_id uuid, scope text)
+returns integer
+language plpgsql security invoker set search_path = ''
+as $$
+declare
+  night public.game_nights;
+  cancelled integer;
+begin
+  if cancel_game_nights.scope is null or cancel_game_nights.scope not in ('this', 'later') then
+    raise exception 'Unknown scope';
+  end if;
+  night := private.lock_game_night(cancel_game_nights.night_id);
+
+  if cancel_game_nights.scope = 'this' or night.series_id is null then
+    update public.game_nights g
+    set cancelled_at = now(), cancelled_by = (select auth.uid())
+    where g.id = night.id and g.cancelled_at is null;
+    get diagnostics cancelled = row_count;
+    return cancelled;
+  end if;
+
+  update public.game_night_series s
+  set ended_after = least(coalesce(s.ended_after, night.occurrence - 1), night.occurrence - 1)
+  where s.id = night.series_id;
+  update public.game_nights g
+  set cancelled_at = now(), cancelled_by = (select auth.uid())
+  where g.series_id = night.series_id and g.occurrence >= night.occurrence and g.cancelled_at is null;
+  get diagnostics cancelled = row_count;
+  return cancelled;
+end;
+$$;
+
+revoke execute on function public.change_game_nights(uuid, text, jsonb), public.cancel_game_nights(uuid, text)
+  from public, anon;
+grant execute on function public.change_game_nights(uuid, text, jsonb), public.cancel_game_nights(uuid, text)
+  to authenticated;

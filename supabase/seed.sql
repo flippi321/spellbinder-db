@@ -54,14 +54,31 @@ select '00000000-0000-4000-b000-000000000001', id,
        case when id = '00000000-0000-4000-a000-000000000002' then 'owner' else 'member' end
 from public.profiles;
 
--- ── Next game night: Thursday 19:00 Oslo time, 4 of 5 going ─────────────────────────────────
-insert into public.game_nights (id, playgroup_id, starts_at, location, notes, created_by)
-select '00000000-0000-4000-c000-000000000001', '00000000-0000-4000-b000-000000000001',
+-- ── Game nights: "Thursday Commander", weekly on Thursdays 19:00 Oslo time; the next one has 4 of 5 going ──────
+insert into public.game_night_series (
+  id, playgroup_id, title, location, notes, bracket_min, bracket_max, starts_at, time_zone, frequency,
+  generated_through, created_by, updated_by
+)
+select '00000000-0000-4000-d000-000000000001', '00000000-0000-4000-b000-000000000001', 'Thursday Commander',
+       'Jonas''s', 'Pizza at 18:30.', 2, 3,
        case when thursday > now() then thursday else thursday + interval '7 days' end,
-       'Jonas''s', 'Bracket 2–3 decks. Pizza at 18:30.', '00000000-0000-4000-a000-000000000002'
+       'Europe/Oslo', 'weekly', 0, '00000000-0000-4000-a000-000000000002', '00000000-0000-4000-a000-000000000002'
 from (
   select (date_trunc('week', now() at time zone 'Europe/Oslo') + interval '3 days 19 hours') at time zone 'Europe/Oslo' as thursday
 ) t;
+
+insert into public.game_nights (
+  id, playgroup_id, title, starts_at, location, notes, bracket_min, bracket_max, series_id, occurrence,
+  created_by, updated_by
+)
+select '00000000-0000-4000-c000-000000000001', playgroup_id, title, starts_at, location, notes, bracket_min, bracket_max,
+       id, 0, created_by, updated_by
+from public.game_night_series where id = '00000000-0000-4000-d000-000000000001';
+
+-- The rest of the series up to two months ahead, made the way the app makes them: top_up_game_nights as Jonas.
+select set_config('request.jwt.claims', '{"sub": "00000000-0000-4000-a000-000000000002", "role": "authenticated"}', false);
+select public.top_up_game_nights('00000000-0000-4000-b000-000000000001');
+select set_config('request.jwt.claims', '', false);
 
 insert into public.rsvps (game_night_id, user_id, status)
 values
