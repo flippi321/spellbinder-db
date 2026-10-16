@@ -9,7 +9,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local role postgres;
 set local search_path = public, extensions;
-select plan(104);
+select plan(112);
 
 -- ── Setup (as postgres, bypassing RLS) ─────────────────────────────────────────────────────
 insert into auth.users (id, email) values
@@ -146,9 +146,11 @@ select throws_ok(
   $$ insert into public.game_nights (playgroup_id, starts_at, series_id)
      values ('99999999-0000-4000-a000-000000000001', now(), '5e5e5e5e-0000-4000-a000-000000000001') $$,
   '23514', null, 'a series night needs an occurrence number');
+select set_config('request.jwt.claims', '', true);
 select throws_ok(
-  $$ insert into public.game_nights (playgroup_id, starts_at, cancelled_at) values ('99999999-0000-4000-a000-000000000001', now(), now()) $$,
-  '23514', null, 'a cancelled night says who cancelled it');
+  $$ insert into public.game_nights (playgroup_id, starts_at, cancelled_at, created_by)
+     values ('99999999-0000-4000-a000-000000000001', now(), now(), 'aaaaaaaa-0000-4000-a000-000000000000') $$,
+  '23514', null, 'a cancelled night says who cancelled it (also without a signed-in user)');
 select throws_ok(
   $$ insert into public.game_nights (playgroup_id, starts_at, series_id, occurrence, created_by)
      values ('99999999-0000-4000-a000-000000000002', now(), '5e5e5e5e-0000-4000-a000-000000000001', 0,
@@ -539,6 +541,100 @@ update public.game_night_series set generated_through = 3 where id = current_set
 set local role authenticated;
 select is(public.top_up_game_nights('99999999-0000-4000-a000-000000000001'), 0,
   'top-up creates nothing after a cancelled series');
+
+-- This and later never brings back the last nights created when they were cancelled or deleted.
+select set_config('test.s7', (
+  select series_id::text from public.plan_game_night(
+    group_id => '99999999-0000-4000-a000-000000000001', title => 'Wednesdays',
+    starts_at => current_setting('test.thursday')::timestamptz + interval '6 days',
+    repeat => '{"frequency": "weekly", "repeat_every": 1, "time_zone": "Europe/Oslo"}')), true);
+select set_config('test.s7_last', (select generated_through::text from public.game_night_series where id = current_setting('test.s7')::uuid), true);
+select public.cancel_game_nights(
+  (select id from public.game_nights where series_id = current_setting('test.s7')::uuid
+     and occurrence = current_setting('test.s7_last')::int), 'this');
+delete from public.game_nights
+where series_id = current_setting('test.s7')::uuid and occurrence = current_setting('test.s7_last')::int - 1;
+select public.change_game_nights(
+  (select id from public.game_nights where series_id = current_setting('test.s7')::uuid and occurrence = 2), 'later',
+  '{"bracket_min": 1, "bracket_max": 2}');
+select is(
+  (select count(*)::int from public.game_nights g, public.game_night_series s
+   where s.id = current_setting('test.s7')::uuid and g.title = 'Wednesdays' and g.cancelled_at is null
+     and g.starts_at in (
+       private.game_night_occurrence(s.starts_at, s.time_zone, s.frequency, s.repeat_every, s.monthly_by, current_setting('test.s7_last')::int),
+       private.game_night_occurrence(s.starts_at, s.time_zone, s.frequency, s.repeat_every, s.monthly_by, current_setting('test.s7_last')::int - 1))),
+  0, 'a later change does not bring back the last nights when they were cancelled or deleted');
+select is(
+  (select generated_through from public.game_night_series s
+   where s.id = (select series_id from public.game_nights where title = 'Wednesdays' and occurrence = 0
+                 and series_id <> current_setting('test.s7')::uuid)),
+  current_setting('test.s7_last')::int - 2, 'the new series counts on from where the old one stopped');
+
+-- This and later with a new repeat rule.
+select set_config('test.s8', (
+  select series_id::text from public.plan_game_night(
+    group_id => '99999999-0000-4000-a000-000000000001', title => 'Rule change',
+    starts_at => current_setting('test.thursday')::timestamptz + interval '5 days',
+    repeat => '{"frequency": "weekly", "repeat_every": 1, "time_zone": "Europe/Oslo"}')), true);
+select set_config('test.r1',
+  (select id::text from public.game_nights where series_id = current_setting('test.s8')::uuid and occurrence = 1), true);
+select public.change_game_nights(current_setting('test.r1')::uuid, 'later',
+  '{"repeat": {"frequency": "weekly", "repeat_every": 2, "time_zone": "Europe/Oslo"}}');
+select set_config('test.s9', (select series_id::text from public.game_nights where id = current_setting('test.r1')::uuid), true);
+select is(
+  (select (s.repeat_every,
+           (select count(*) from public.game_nights g where g.series_id = s.id
+              and g.starts_at <> private.game_night_occurrence(s.starts_at, s.time_zone, s.frequency, s.repeat_every, s.monthly_by, g.occurrence)),
+           (select count(*) from public.game_nights g where g.series_id = s.id)
+           = (select count(*) from generate_series(0, 20) n
+              where private.game_night_occurrence(s.starts_at, s.time_zone, s.frequency, s.repeat_every, s.monthly_by, n)
+                    <= now() + interval '2 months'))::text
+   from public.game_night_series s where s.id = current_setting('test.s9')::uuid),
+  '(2,0,t)', 'weekly becomes every other week from night 1 on, up to two months ahead');
+select set_config('test.r2',
+  (select id::text from public.game_nights where series_id = current_setting('test.s9')::uuid and occurrence = 1), true);
+select public.change_game_nights(current_setting('test.r2')::uuid, 'later',
+  '{"repeat": {"frequency": "monthly", "repeat_every": 1, "monthly_by": "date", "time_zone": "Europe/Oslo"}}');
+select is(
+  (select (s.frequency, s.repeat_every, s.monthly_by,
+           (select count(*) from public.game_nights g where g.series_id = s.id
+              and g.starts_at <> private.game_night_occurrence(s.starts_at, s.time_zone, s.frequency, s.repeat_every, s.monthly_by, g.occurrence)),
+           (select count(*) from public.game_nights g where g.series_id = s.id)
+           = (select count(*) from generate_series(0, 20) n
+              where private.game_night_occurrence(s.starts_at, s.time_zone, s.frequency, s.repeat_every, s.monthly_by, n)
+                    <= now() + interval '2 months'))::text
+   from public.game_night_series s
+   where s.id = (select series_id from public.game_nights where id = current_setting('test.r2')::uuid)),
+  '(monthly,1,date,0,t)', 'every other week becomes monthly by date');
+
+-- A series row always has a known time zone, even when written directly.
+select throws_ok(
+  $$ insert into public.game_night_series (playgroup_id, starts_at, time_zone, frequency)
+     values ('99999999-0000-4000-a000-000000000001', now(), 'Mars/Olympus', 'weekly') $$,
+  '22023', null, 'a series needs a known time zone');
+
+-- Top-up doesn't fill in nights that have already passed.
+select set_config('test.s10', (
+  select series_id::text from public.plan_game_night(
+    group_id => '99999999-0000-4000-a000-000000000001', title => 'Started earlier', starts_at => now() - interval '15 days',
+    repeat => '{"frequency": "weekly", "repeat_every": 1, "time_zone": "Europe/Oslo"}')), true);
+select is(
+  (select (count(*) filter (where starts_at < now()), count(*) filter (where starts_at > now()) >= 8)::text
+   from public.game_nights where series_id = current_setting('test.s10')::uuid),
+  '(1,t)', 'a series that started in the past gets only its first night and the upcoming ones');
+
+-- cancelled_by is always whoever cancelled.
+select set_config('test.f0',
+  (select id::text from public.game_nights where series_id = current_setting('test.s6')::uuid and occurrence = 0), true);
+update public.game_nights set cancelled_at = now(), cancelled_by = 'aaaaaaaa-0000-4000-a000-000000000000'
+where id = current_setting('test.f0')::uuid;
+select is((select cancelled_by from public.game_nights where id = current_setting('test.f0')::uuid),
+  'bbbbbbbb-0000-4000-a000-000000000000'::uuid, 'cancelling a night directly records the member who did it');
+select set_config('request.jwt.claims', '{"sub": "aaaaaaaa-0000-4000-a000-000000000000", "role": "authenticated"}', true);
+update public.game_nights set location = 'Somewhere', cancelled_by = 'aaaaaaaa-0000-4000-a000-000000000000'
+where id = current_setting('test.f0')::uuid;
+select is((select cancelled_by from public.game_nights where id = current_setting('test.f0')::uuid),
+  'bbbbbbbb-0000-4000-a000-000000000000'::uuid, 'a later change keeps who cancelled it');
 
 -- Errors.
 select set_config('request.jwt.claims', '{"sub": "cccccccc-0000-4000-a000-000000000000", "role": "authenticated"}', true);

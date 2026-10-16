@@ -64,8 +64,8 @@ daylight saving. The clients use four RPCs (security invoker, so RLS applies):
 | RPC | Does |
 |---|---|
 | `plan_game_night(group_id, title, starts_at, location, notes, bracket_min, bracket_max, repeat)` | A one-off (`repeat` null) or a series (`{frequency, repeat_every, monthly_by, time_zone}`) and its nights. Returns the first night. |
-| `top_up_game_nights(group_id)` | Creates the missing nights of every running series up to **two months** ahead. Idempotent; a night someone deleted is not made again. The app calls it for each group it loads, before reading nights. |
-| `change_game_nights(night_id, scope, patch)` | `this` changes one night; `later` changes it and every later night of its series (the repeat rule too) by starting a new series there. |
+| `top_up_game_nights(group_id)` | Creates the missing upcoming nights of every running series up to **two months** ahead (nights that have passed are skipped). Idempotent; a night someone deleted is not made again. The app calls it for each group it loads, before reading nights. |
+| `change_game_nights(night_id, scope, patch)` | `this` changes one night; `later` changes it and every later night of its series (the repeat rule too) by starting a new series there. A `repeat` in the patch keeps the old rule's values for keys it leaves out, so send the whole rule. |
 | `cancel_game_nights(night_id, scope)` | Soft cancel (`cancelled_at` / `cancelled_by`): `this` night, or `later` ones too, which ends the series. |
 
 Moving a night (a new `starts_at`) deletes its RSVPs so people answer again; a new place, title or bracket keeps
