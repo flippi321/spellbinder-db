@@ -339,3 +339,161 @@ revoke execute on function public.top_up_game_nights(uuid),
   public.plan_game_night(uuid, text, timestamptz, text, text, smallint, smallint, jsonb) from public, anon;
 grant execute on function public.top_up_game_nights(uuid),
   public.plan_game_night(uuid, text, timestamptz, text, text, smallint, smallint, jsonb) to authenticated;
+
+-- ── Changing and cancelling ────────────────────────────────────────────────────────────────
+-- Changes a night (scope 'this') or a night and every later night of its series (scope 'later').
+-- `patch` keys, each optional: title, starts_at, location, notes, bracket_min + bracket_max (together; null = Any),
+-- and with 'later' only, repeat ({frequency, repeat_every, monthly_by, time_zone}; keys left out stay as they were;
+-- null stops repeating).
+--
+-- 'later' on night k of a series ends that series after k - 1 and starts a new one at night k as patched. The
+-- non-cancelled nights from k on move to the new series as occurrence (old - k), on the new series' dates and with its
+-- title, place, notes and brackets, so a later night changed on its own before is overwritten too. Cancelled nights
+-- stay on the old series as they are, and the new series skips their numbers, so a cancelled week stays cancelled.
+-- Moved nights that now fall more than two months ahead are removed (top-up makes them again in time); nights whose
+-- time didn't change keep their RSVPs. With "repeat": null, night k becomes a one-off and the later nights are
+-- removed. 'later' with a repeat on a one-off makes it occurrence 0 of a new series; without one, it is like 'this'.
+create or replace function public.change_game_nights(night_id uuid, scope text, patch jsonb)
+returns void
+language plpgsql security invoker set search_path = ''
+as $$
+declare
+  night public.game_nights;
+  old_series public.game_night_series;
+  new_series public.game_night_series;
+  k integer;
+begin
+  if change_game_nights.scope is null or change_game_nights.scope not in ('this', 'later') then
+    raise exception 'Unknown scope';
+  end if;
+  select * into night from public.game_nights g where g.id = change_game_nights.night_id;
+  if not found then
+    raise exception 'Game night not found';
+  end if;
+  patch := coalesce(patch, '{}'::jsonb);
+  if patch ? 'repeat' and change_game_nights.scope = 'this' then
+    raise exception 'Repeat changes need scope later';
+  end if;
+  if (patch ? 'bracket_min') <> (patch ? 'bracket_max') then
+    raise exception 'bracket_min and bracket_max go together';
+  end if;
+
+  -- The night as patched.
+  if patch ? 'title' then night.title := patch ->> 'title'; end if;
+  if patch ? 'starts_at' then night.starts_at := (patch ->> 'starts_at')::timestamptz; end if;
+  if patch ? 'location' then night.location := patch ->> 'location'; end if;
+  if patch ? 'notes' then night.notes := patch ->> 'notes'; end if;
+  if patch ? 'bracket_min' then
+    night.bracket_min := (patch ->> 'bracket_min')::smallint;
+    night.bracket_max := (patch ->> 'bracket_max')::smallint;
+  end if;
+
+  -- Just this night (or a one-off that doesn't start repeating).
+  if change_game_nights.scope = 'this'
+     or (night.series_id is null and coalesce(jsonb_typeof(patch -> 'repeat'), 'null') = 'null') then
+    update public.game_nights g
+    set title = night.title, starts_at = night.starts_at, location = night.location, notes = night.notes,
+        bracket_min = night.bracket_min, bracket_max = night.bracket_max
+    where g.id = night.id;
+    return;
+  end if;
+
+  -- A one-off starts repeating.
+  if night.series_id is null then
+    new_series := private.insert_game_night_series(
+      night.playgroup_id, night.title, night.location, night.notes, night.bracket_min, night.bracket_max,
+      night.starts_at, patch -> 'repeat', 0);
+    update public.game_nights g
+    set title = night.title, starts_at = night.starts_at, location = night.location, notes = night.notes,
+        bracket_min = night.bracket_min, bracket_max = night.bracket_max, series_id = new_series.id, occurrence = 0
+    where g.id = night.id;
+    perform public.top_up_game_nights(night.playgroup_id);
+    return;
+  end if;
+
+  -- This and later in a series: end the old series before night k.
+  k := night.occurrence;
+  select * into old_series from public.game_night_series s where s.id = night.series_id for update;
+  update public.game_night_series s
+  set ended_after = least(coalesce(s.ended_after, k - 1), k - 1)
+  where s.id = old_series.id;
+
+  -- Stop repeating: night k becomes a one-off, and the later nights go.
+  if patch ? 'repeat' and jsonb_typeof(patch -> 'repeat') = 'null' then
+    delete from public.game_nights g
+    where g.series_id = old_series.id and g.occurrence > k and g.cancelled_at is null;
+    update public.game_nights g
+    set title = night.title, starts_at = night.starts_at, location = night.location, notes = night.notes,
+        bracket_min = night.bracket_min, bracket_max = night.bracket_max, series_id = null, occurrence = null
+    where g.id = night.id;
+    return;
+  end if;
+
+  -- A new series from night k as patched; the old series' rule fills what the patch leaves out.
+  new_series := private.insert_game_night_series(
+    night.playgroup_id, night.title, night.location, night.notes, night.bracket_min, night.bracket_max,
+    night.starts_at, patch -> 'repeat', -1, old_series);
+
+  update public.game_nights g
+  set series_id = new_series.id,
+      occurrence = g.occurrence - k,
+      starts_at = private.game_night_occurrence(new_series.starts_at, new_series.time_zone, new_series.frequency,
+                                                new_series.repeat_every, new_series.monthly_by, g.occurrence - k),
+      title = new_series.title, location = new_series.location, notes = new_series.notes,
+      bracket_min = new_series.bracket_min, bracket_max = new_series.bracket_max
+  where g.series_id = old_series.id and g.occurrence >= k and (g.cancelled_at is null or g.id = night.id);
+
+  delete from public.game_nights g
+  where g.series_id = new_series.id and g.occurrence > 0 and g.starts_at > now() + interval '2 months';
+
+  update public.game_night_series s
+  set generated_through = coalesce((select max(g.occurrence) from public.game_nights g where g.series_id = s.id), 0),
+      ended_after = case when old_series.ended_after is not null then greatest(old_series.ended_after - k, -1) end
+  where s.id = new_series.id;
+
+  perform public.top_up_game_nights(night.playgroup_id);
+end;
+$$;
+
+-- Cancels a night (scope 'this') or a night and every later night of its series, ending the series there
+-- (scope 'later'; on a one-off it is the same as 'this'). Cancelled nights stay, with who cancelled them.
+-- Returns how many nights it cancelled.
+create or replace function public.cancel_game_nights(night_id uuid, scope text)
+returns integer
+language plpgsql security invoker set search_path = ''
+as $$
+declare
+  night public.game_nights;
+  cancelled integer;
+begin
+  if cancel_game_nights.scope is null or cancel_game_nights.scope not in ('this', 'later') then
+    raise exception 'Unknown scope';
+  end if;
+  select * into night from public.game_nights g where g.id = cancel_game_nights.night_id;
+  if not found then
+    raise exception 'Game night not found';
+  end if;
+
+  if cancel_game_nights.scope = 'this' or night.series_id is null then
+    update public.game_nights g
+    set cancelled_at = now(), cancelled_by = (select auth.uid())
+    where g.id = night.id and g.cancelled_at is null;
+    get diagnostics cancelled = row_count;
+    return cancelled;
+  end if;
+
+  update public.game_night_series s
+  set ended_after = least(coalesce(s.ended_after, night.occurrence - 1), night.occurrence - 1)
+  where s.id = night.series_id;
+  update public.game_nights g
+  set cancelled_at = now(), cancelled_by = (select auth.uid())
+  where g.series_id = night.series_id and g.occurrence >= night.occurrence and g.cancelled_at is null;
+  get diagnostics cancelled = row_count;
+  return cancelled;
+end;
+$$;
+
+revoke execute on function public.change_game_nights(uuid, text, jsonb), public.cancel_game_nights(uuid, text)
+  from public, anon;
+grant execute on function public.change_game_nights(uuid, text, jsonb), public.cancel_game_nights(uuid, text)
+  to authenticated;
