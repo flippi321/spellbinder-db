@@ -53,6 +53,25 @@ The apps only need the project URL and the **publishable** key (Dashboard → Pr
 Expo app, these go in `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` with
 `EXPO_PUBLIC_DATA_MODE=supabase`. Never give a client a secret or service-role key.
 
+## Game nights
+
+Any member plans, changes and cancels a group's game nights (migration `0010`). A night has a title, a time, an
+optional place and notes, and a bracket range (`bracket_min` / `bracket_max`, both null = Any). Repeating nights
+belong to a `game_night_series` (weekly or monthly, every 1 or 2; monthly by weekday or by date), and each repeat is
+its own row with its own RSVPs. Repeat dates are computed in the series' IANA time zone, so 19:00 stays 19:00 across
+daylight saving. The clients use four RPCs (security invoker, so RLS applies):
+
+| RPC | Does |
+|---|---|
+| `plan_game_night(group_id, title, starts_at, location, notes, bracket_min, bracket_max, repeat)` | A one-off (`repeat` null) or a series (`{frequency, repeat_every, monthly_by, time_zone}`) and its nights. Returns the first night. |
+| `top_up_game_nights(group_id)` | Creates the missing nights of every running series up to **two months** ahead. Idempotent; a night someone deleted is not made again. The app calls it for each group it loads, before reading nights. |
+| `change_game_nights(night_id, scope, patch)` | `this` changes one night; `later` changes it and every later night of its series (the repeat rule too) by starting a new series there. |
+| `cancel_game_nights(night_id, scope)` | Soft cancel (`cancelled_at` / `cancelled_by`): `this` night, or `later` ones too, which ends the series. |
+
+Moving a night (a new `starts_at`) deletes its RSVPs so people answer again; a new place, title or bracket keeps
+them. `updated_by` records who changed a night last. Callers outside the group get `Not a member of this playgroup`
+or `Game night not found`. The comments in `supabase/migrations/0010_game_night_series.sql` give the details.
+
 ## Oracle Edge Function
 
 `supabase/functions/oracle` is a stub. To deploy it:

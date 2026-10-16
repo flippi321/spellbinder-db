@@ -42,7 +42,8 @@ Source of truth for the product: `../spellbinder-app/docs/VISION.md` §6. SQL pa
 | Your own collection / decks / deck_cards | you + members of any playgroup you share | only you |
 | `profiles` | you + playgroup peers | only you (created by the sign-up trigger) |
 | `playgroups`, `playgroup_members` | members | via `create_playgroup` / `join_playgroup` RPCs; owner updates/deletes; members leave |
-| `game_nights`, `games` | members | members create; creator deletes (games: creator edits) |
+| `game_nights`, `game_night_series` | members | members create, change and delete (soft cancel through `cancel_game_nights`); series: members |
+| `games` | members | members create; creator edits and deletes |
 | `rsvps` | members | only your own row |
 | `loan_requests` | requester and owner | requester creates (pending); trigger: owner lends/declines, either party returns |
 | `cards`, `card_versions` (Scryfall cache) | any authenticated user | any authenticated user (until the lockdown, backlog SB-13) |
