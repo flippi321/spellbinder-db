@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local role postgres; -- the remote CLI logs in as a temporary role; act as postgres like a local run
 set local search_path = public, extensions;
-select plan(31);
+select plan(38);
 
 -- ── Setup (as postgres, bypassing RLS) ─────────────────────────────────────────────────────
 insert into auth.users (id, email, raw_user_meta_data) values
@@ -90,6 +90,47 @@ select lives_ok($$ update public.loan_requests set status = 'lent' $$, 'the owne
 select set_config('request.jwt.claims', '{"sub": "aaaaaaaa-0000-4000-a000-000000000000", "role": "authenticated"}', true);
 select lives_ok($$ update public.loan_requests set status = 'returned' $$, 'the requester marks it returned');
 select throws_ok($$ update public.loan_requests set status = 'pending' $$, 'P0001', null, 'a returned loan cannot reopen');
+
+-- Cancelling is a delete, and only the requester's pending request goes. A blocked delete removes 0 rows, it doesn't
+-- throw, so each case counts what's left.
+select lives_ok(
+  $$ insert into public.loan_requests (id, card_id, requester_id, owner_id)
+     values ('e1000000-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000',
+             'aaaaaaaa-0000-4000-a000-000000000000', 'bbbbbbbb-0000-4000-a000-000000000000') $$,
+  'A asks B again');
+delete from public.loan_requests where id = 'e1000000-0000-4000-a000-000000000000';
+select is((select count(*)::int from public.loan_requests where id = 'e1000000-0000-4000-a000-000000000000'), 0,
+  'the requester cancels their own pending request');
+
+insert into public.loan_requests (id, card_id, requester_id, owner_id) values
+  ('e2000000-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000',
+   'aaaaaaaa-0000-4000-a000-000000000000', 'bbbbbbbb-0000-4000-a000-000000000000'),
+  ('e3000000-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000',
+   'aaaaaaaa-0000-4000-a000-000000000000', 'bbbbbbbb-0000-4000-a000-000000000000');
+
+select set_config('request.jwt.claims', '{"sub": "bbbbbbbb-0000-4000-a000-000000000000", "role": "authenticated"}', true);
+delete from public.loan_requests where id = 'e2000000-0000-4000-a000-000000000000';
+select is((select count(*)::int from public.loan_requests where id = 'e2000000-0000-4000-a000-000000000000'), 1,
+  'the owner cannot delete a pending request');
+update public.loan_requests set status = 'lent' where id = 'e2000000-0000-4000-a000-000000000000';
+update public.loan_requests set status = 'declined' where id = 'e3000000-0000-4000-a000-000000000000';
+
+select set_config('request.jwt.claims', '{"sub": "aaaaaaaa-0000-4000-a000-000000000000", "role": "authenticated"}', true);
+delete from public.loan_requests where id = 'e2000000-0000-4000-a000-000000000000';
+select is((select status from public.loan_requests where id = 'e2000000-0000-4000-a000-000000000000'), 'lent',
+  'the requester cannot cancel a lent loan');
+delete from public.loan_requests where id = 'e3000000-0000-4000-a000-000000000000';
+select is((select status from public.loan_requests where id = 'e3000000-0000-4000-a000-000000000000'), 'declined',
+  'the requester cannot delete a declined request');
+
+select set_config('request.jwt.claims', '{"sub": "cccccccc-0000-4000-a000-000000000000", "role": "authenticated"}', true);
+select is((select count(*)::int from public.loan_requests where id in ('e2000000-0000-4000-a000-000000000000', 'e3000000-0000-4000-a000-000000000000')), 0,
+  'a stranger cannot see either party''s loans');
+delete from public.loan_requests where id in ('e2000000-0000-4000-a000-000000000000', 'e3000000-0000-4000-a000-000000000000');
+
+select set_config('request.jwt.claims', '{"sub": "aaaaaaaa-0000-4000-a000-000000000000", "role": "authenticated"}', true);
+select is((select count(*)::int from public.loan_requests where id in ('e2000000-0000-4000-a000-000000000000', 'e3000000-0000-4000-a000-000000000000')), 2,
+  'a stranger''s delete removes nothing');
 
 -- ── Game nights and RSVPs ──────────────────────────────────────────────────────────────────
 select lives_ok(
