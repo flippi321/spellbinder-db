@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local role postgres; -- the remote CLI logs in as a temporary role; act as postgres like a local run
 set local search_path = public, extensions;
-select plan(38);
+select plan(43);
 
 -- ── Setup (as postgres, bypassing RLS) ─────────────────────────────────────────────────────
 insert into auth.users (id, email, raw_user_meta_data) values
@@ -58,15 +58,31 @@ select throws_ok($$ select public.join_playgroup('NOPE1234') $$, 'P0001', 'Inval
 select lives_ok($$ select public.join_playgroup(lower(current_setting('test.code'))) $$, 'B joins with the code (case-insensitive)');
 select is((select count(*)::int from public.playgroup_members), 2, 'B sees both members');
 
+-- ── Precon flag (DK-10): the owner sets it ─────────────────────────────────────────────────
+select is((select is_precon from public.decks where id = 'dddddddd-0000-4000-a000-000000000000'), false,
+  'a deck created without the flag is not a precon');
+select lives_ok(
+  $$ update public.decks set is_precon = true where id = 'dddddddd-0000-4000-a000-000000000000' $$,
+  'B marks their deck as a precon');
+select is((select is_precon from public.decks where id = 'dddddddd-0000-4000-a000-000000000000'), true,
+  'B''s deck is now a precon');
+
 -- ── Peers read but never write each other's rows ───────────────────────────────────────────
 select set_config('request.jwt.claims', '{"sub": "aaaaaaaa-0000-4000-a000-000000000000", "role": "authenticated"}', true);
 select is((select count(*)::int from public.profiles), 2, 'A now sees B''s profile');
 select is((select count(*)::int from public.collection_items), 1, 'A now sees B''s collection');
 select is((select count(*)::int from public.deck_cards), 1, 'A now sees B''s deck cards');
 
+select is((select is_precon from public.decks where id = 'dddddddd-0000-4000-a000-000000000000'), true,
+  'A reads B''s precon flag');
+
+-- A blocked update changes 0 rows, it doesn't throw, so each case reads the value back.
 update public.collection_items set quantity = 99;
+update public.decks set is_precon = false;
 delete from public.decks;
 select is((select quantity from public.collection_items), 2, 'A cannot change B''s collection');
+select is((select is_precon from public.decks where id = 'dddddddd-0000-4000-a000-000000000000'), true,
+  'A cannot change B''s precon flag');
 select is((select count(*)::int from public.decks), 1, 'A cannot delete B''s deck');
 select throws_ok(
   $$ insert into public.collection_items (user_id, version_id, card_id, quantity)

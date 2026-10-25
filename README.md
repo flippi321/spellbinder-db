@@ -53,6 +53,12 @@ The apps only need the project URL and the **publishable** key (Dashboard → Pr
 Expo app, these go in `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` with
 `EXPO_PUBLIC_DATA_MODE=supabase`. Never give a client a secret or service-role key.
 
+## Decks
+
+`decks.is_precon` (migration `0011`, default `false`) marks a preconstructed deck; only its owner sets it, and the
+app treats a precon as at least Bracket 2. `decks.bracket` is no longer read by the app once DK-11 ships and will be
+dropped later.
+
 ## Game nights
 
 Any member plans, changes and cancels a group's game nights (migration `0010`). A night has a title, a time, an
