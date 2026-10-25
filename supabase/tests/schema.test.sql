@@ -1,4 +1,4 @@
--- Schema rules: card foreign keys, the collection key, condition and finish enums, updated_at triggers, and the game → game night link.
+-- Schema rules: card foreign keys, the collection key, condition and finish enums, updated_at triggers, the game → game night link, and the deck precon flag.
 -- Run: `npm run test:db`. Everything runs in one transaction and is rolled back.
 --
 -- A and B share playgroup G1; C is alone in G2. Card X has version VX, card Y has version VY.
@@ -7,7 +7,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local role postgres;
 set local search_path = public, extensions;
-select plan(26);
+select plan(30);
 
 -- ── Setup (as postgres, bypassing RLS) ─────────────────────────────────────────────────────
 insert into auth.users (id, email) values
@@ -80,6 +80,12 @@ select throws_ok(
   $$ insert into public.collection_items (user_id, version_id, card_id, quantity, condition)
      values ('bbbbbbbb-0000-4000-a000-000000000000', '11111111-0000-4000-a000-000000000000', '22222222-0000-4000-a000-000000000000', 1, 'EX') $$,
   '23505', null, 'another condition of the same version and finish is not a second row');
+
+-- ── Decks: the precon flag (DK-10) ─────────────────────────────────────────────────────────
+select has_column('public', 'decks', 'is_precon', 'decks have a precon flag');
+select col_type_is('public', 'decks', 'is_precon', 'boolean', 'the precon flag is a boolean');
+select col_not_null('public', 'decks', 'is_precon', 'the precon flag is never null');
+select col_default_is('public', 'decks', 'is_precon', 'false', 'a deck is not a precon unless its owner says so');
 
 -- ── updated_at: an update always stamps now(), whatever the client sends ───────────────────
 insert into public.loan_requests (id, card_id, requester_id, owner_id)
