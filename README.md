@@ -115,7 +115,7 @@ then `npm run sync:cards` (`SYNC_FORCE=true` reloads the same file). A full load
 `EXPO_PUBLIC_SUPABASE_URL` points at. It signs in as that user (signing up the first time) and works through RLS, so
 it needs no secret key. It deletes the user's decks and collection, then adds the decks in `scripts/seed-test-user/`
 and a collection of 300 cards: every deck card, plus cards from `extras.txt`. Playgroups, loans and game nights are
-left alone. It asks before changing anything (`npm run seed:test-user -- --yes` skips the question).
+left alone. It runs without asking, so check the URL first.
 
 The decklists are TappedOut's, pasted as shown on the deck page (`foil`, `*f-etch*` and `GC` markers included); the
 deck names, themes and brackets are in `DECKS` in `scripts/seed-test-user.ts`. A name it can't find stops the run

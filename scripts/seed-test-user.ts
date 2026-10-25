@@ -1,6 +1,6 @@
 // Development helper: puts the app's `.env` test user back into a known state.
 //
-//   npm run seed:test-user            (asks before it changes anything; `-- --yes` skips the question)
+//   npm run seed:test-user
 //
 // Reads EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY, EXPO_PUBLIC_TEST_USER_EMAIL and
 // EXPO_PUBLIC_TEST_USER_PASSWORD from ../spellbinder-app/.env, so it seeds whichever project the app points at.
@@ -13,7 +13,6 @@
 // 4. Creates the decks and a collection of COLLECTION_SIZE cards: every deck card, plus extras up to the total.
 
 import { readFileSync } from 'node:fs';
-import { createInterface } from 'node:readline/promises';
 
 import { parseDecklist, type Decklist, type Finish } from './seed-test-user/decklist.ts';
 
@@ -185,18 +184,6 @@ function categoryOf(card: CardRow): string {
   return 'Other';
 }
 
-async function confirm(question: string): Promise<boolean> {
-  if (process.argv.includes('--yes')) return true;
-  if (!process.stdin.isTTY) {
-    console.error('Not a terminal: pass --yes to run without the question.');
-    return false;
-  }
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question(`${question} [y/N] `);
-  rl.close();
-  return /^y(es)?$/i.test(answer.trim());
-}
-
 async function main() {
   const decks = DECKS.map((deck) => ({ ...deck, list: parseDecklist(readData(deck.file)) }));
   const deckLines = (list: Decklist) => [{ ...list.commander, quantity: 1 }, ...list.cards];
@@ -217,7 +204,6 @@ async function main() {
   console.log(`Project: ${host}\nUser:    ${EMAIL}`);
   console.log(`Plan:    delete their decks and collection, then add ${decks.length} decks (${deckTotal} cards) and a`);
   console.log(`         collection of ${COLLECTION_SIZE} (${extras.length} outside the decks).`);
-  if (!(await confirm(`Reseed ${EMAIL} on ${host}?`))) return console.log('Nothing changed.');
 
   const { token, userId } = await signIn();
   const rest = (path: string, init: { method?: string; body?: unknown; prefer?: string } = {}) =>
