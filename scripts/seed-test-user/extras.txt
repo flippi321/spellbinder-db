@@ -1,0 +1,131 @@
+# Owned cards outside the two decks, one name per line. seed-test-user takes them from the top, skipping any a deck
+# already has, until the collection holds 300 cards. Keep more than it needs, so a deck change never runs it dry.
+Lightning Bolt
+Counterspell
+Llanowar Elves
+Birds of Paradise
+Dark Ritual
+Brainstorm
+Ponder
+Preordain
+Opt
+Cultivate
+Rampant Growth
+Three Visits
+Beast Within
+Chaos Warp
+Generous Gift
+Cyclonic Rift
+Rhystic Study
+Mystic Remora
+Swan Song
+Negate
+Arcane Denial
+Mana Leak
+Dovin's Veto
+Anguished Unmaking
+Vindicate
+Mortify
+Putrefy
+Assassin's Trophy
+Abrupt Decay
+Krosan Grip
+Nature's Claim
+Reclamation Sage
+Eternal Witness
+Wood Elves
+Elvish Mystic
+Fyndhorn Elves
+Lotus Cobra
+Tireless Tracker
+Beast Whisperer
+Guardian Project
+Sylvan Library
+Harmonize
+Night's Whisper
+Sign in Blood
+Read the Bones
+Phyrexian Arena
+Demonic Tutor
+Vampiric Tutor
+Diabolic Intent
+Toxic Deluge
+Damnation
+Wrath of God
+Supreme Verdict
+Blasphemous Act
+Vandalblast
+Feed the Swarm
+Infernal Grasp
+Go for the Throat
+Doom Blade
+Murder
+Hero's Downfall
+Bitter Triumph
+Deadly Rollick
+Heroic Intervention
+Teferi's Protection
+Smothering Tithe
+Esper Sentinel
+Mother of Runes
+Giver of Runes
+Skullclamp
+Lightning Greaves
+Swiftfoot Boots
+Mind Stone
+Fellwar Stone
+Thought Vessel
+Wayfarer's Bauble
+Burnished Hart
+Solemn Simulacrum
+Wurmcoil Engine
+Sensei's Divining Top
+Etherium Sculptor
+Thassa's Oracle
+Dockside Extortionist
+Jeska's Will
+Deflecting Swat
+Fierce Guardianship
+Force of Will
+Mana Drain
+Craterhoof Behemoth
+Avenger of Zendikar
+Consecrated Sphinx
+Grave Pact
+Dictate of Erebos
+Ashnod's Altar
+Phyrexian Altar
+Exotic Orchard
+Reliquary Tower
+Rogue's Passage
+Bojuka Bog
+Evolving Wilds
+Terramorphic Expanse
+Temple of the False God
+Myriad Landscape
+Strip Mine
+Wasteland
+Field of the Dead
+Llanowar Wastes
+Shivan Reef
+Yavimaya Coast
+Breeding Pool
+Overgrown Tomb
+Stomping Ground
+Temple Garden
+Savannah
+Bayou
+Taiga
+Tropical Island
+Greater Good
+Seedborn Muse
+Doubling Season
+Parallel Lives
+Rite of Replication
+Expropriate
+Time Warp
+Sakashima's Student
+Spellseeker
+Mulldrifter
+Archmage Emeritus
+Talrand, Sky Summoner

@@ -1,0 +1,121 @@
+Land (30)
+
+    1x Ancient TombGC
+    1x Arid Mesa
+    1x Badlands
+    1x Blood Cryptfoil
+    1x Bloodstained Mire
+    1x Clifftop Retreat
+    1x Command Tower
+    1x Dragonskull Summit
+    1x Drowned Catacomb
+    1x Flooded Strand
+    1x Glacial Fortress
+    1x Godless Shrinefoil
+    1x Hallowed Fountainfoil
+    1x Marsh Flats
+    1x Misty Rainforest
+    1x Plateau
+    1x Polluted Delta
+    1x Reflecting Pool
+    1x Sacred Foundryfoil
+    1x Scalding Tarn
+    1x Scrubland
+    1x Steam Ventsfoil
+    1x Sulfur Falls
+    1x Tundra
+    1x Underground Sea
+    1x Verdant Catacombs
+    1x Volcanic Island
+    1x Watery Gravefoil
+    1x Windswept Heath
+    1x Wooded Foothills
+
+Enchantment (7)
+
+    1x Anointed Procession
+    1x Assemble the Legionfoil
+    1x Freed from the Realfoil
+    1x Mirrodin Besieged
+    1x Oath of Teferi
+    1x Omnisciencefoil
+    1x Whirlwind of Thought
+
+Creature (22)
+
+    1x Ancient Copper Dragon
+    1x Ancient Gold Dragon
+    1x Ancient Silver Dragon
+    1x Archfiend of Despair
+    1x Avacyn, Angel of Hope *f-etch*
+    1x Avacyn, Angel of Horror
+    1x Darksteel Angel
+    1x Displacer Kittenfoil
+    1x Hullbreaker Horrorfoil
+    1x Jhoira, Weatherlight Captainfoil
+    1x Jhoira, Weatherlight Corsair
+    1x Jin-Gitaxias, Core Augur *f-etch*
+    1x Kilo, Apogee Mindfoil
+    1x Krenko, Mob Boss
+    1x Memnarch, the Warden
+    1x Mondrak, Glory Dominusfoil
+    1x Narset, Jeskai Waymasterfoil
+    1x Nissa, Leyline Tamerfoil
+    1x Ojer Taq, Deepest Foundationfoil  Flip
+    1x Urza, Chief Artificer
+    1x Urza, Lord High Artificer *f-etch*
+    1x Vraska, Soul of Stonefoil
+
+Artifact (17)
+
+    1x Arcane Signet
+    1x Chrome MoxGC
+    1x Ichormoon Gauntletfoil
+    1x Mana VaultGC
+    1x Mox Amber
+    1x Mox DiamondfoilGC
+    1x Mox Opal
+    1x Paradise Mantle
+    1x Proteus Staff
+    1x Sol Ring
+    1x Talisman of Conviction
+    1x Talisman of Creativity
+    1x Talisman of Dominance
+    1x Talisman of Hierarchy
+    1x Talisman of Indulgence
+    1x Talisman of Progress
+    1x The One RingGC
+
+Commander (1)
+Commander: foil Jace, Multiverse Architect
+Planeswalker (18)
+
+    1x Aminatou, the Fateshifter *f-etch*
+    1x Elspeth, Storm Slayerfoil
+    1x Elspeth, Sun's Champion
+    1x Jace, Architect of Thoughtfoil
+    1x Jace, Reality Sculptorfoil
+    1x Jace, Wielder of Mysteriesfoil
+    1x Jace, the Living Guildpactfoil
+    1x Jace, the Mind Sculptorfoil
+    1x Narset Transcendent
+    1x Nicol Bolas, Dragon-Godfoil
+    1x Nicol Bolas, God-Pharaoh *f-etch*
+    1x Saheeli, Sublime Artificer
+    1x Tamiyo, the Moon Sagefoil
+    1x Teferi, Hero of Dominariafoil
+    1x Teferi, Master of Timefoil
+    1x Teferi, Who Slows the Sunsetfoil
+    1x The Theorist, Jace Beleren
+    1x Ugin, the Spirit Dragonfoil
+
+Instant (4)
+
+    1x Grand Crescendo
+    1x Path to Exile
+    1x Secure the Wastes
+    1x Swords to Plowshares
+
+Sorcery (1)
+
+    1x Show and Tell

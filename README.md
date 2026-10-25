@@ -107,3 +107,16 @@ SUPABASE_SERVICE_ROLE_KEY=<SECRET_KEY from supabase status>
 ```
 then `npm run sync:cards` (`SYNC_FORCE=true` reloads the same file). A full load takes about 20 s locally and
 ~115 MB of database space; a day with no new file exits in a second.
+
+## Test user
+
+`npm run seed:test-user` puts the app's `.env` test user (`EXPO_PUBLIC_TEST_USER_EMAIL` /
+`EXPO_PUBLIC_TEST_USER_PASSWORD` in `../spellbinder-app/.env`) back into a known state, on whichever project
+`EXPO_PUBLIC_SUPABASE_URL` points at. It signs in as that user (signing up the first time) and works through RLS, so
+it needs no secret key. It deletes the user's decks and collection, then adds the decks in `scripts/seed-test-user/`
+and a collection of 300 cards: every deck card, plus cards from `extras.txt`. Playgroups, loans and game nights are
+left alone. It asks before changing anything (`npm run seed:test-user -- --yes` skips the question).
+
+The decklists are TappedOut's, pasted as shown on the deck page (`foil`, `*f-etch*` and `GC` markers included); the
+deck names, themes and brackets are in `DECKS` in `scripts/seed-test-user.ts`. A name it can't find stops the run
+before anything changes. Tests: `npm run test:scripts`.
