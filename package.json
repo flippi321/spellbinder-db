@@ -16,7 +16,9 @@
     "types": "supabase gen types typescript --linked",
     "types:local": "supabase gen types typescript --local",
     "functions:serve": "supabase functions serve",
-    "sync:cards": "node --env-file-if-exists=.env scripts/sync-cards.ts"
+    "sync:cards": "node --env-file-if-exists=.env scripts/sync-cards.ts",
+    "seed:test-user": "node --env-file-if-exists=../spellbinder-app/.env scripts/seed-test-user.ts",
+    "test:scripts": "node --test \"scripts/**/*.test.ts\""
   },
   "devDependencies": {
     "supabase": "^2.120.0"

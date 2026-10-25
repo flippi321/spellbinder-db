@@ -1,0 +1,114 @@
+Creature (35)
+
+    1x Arbor Adherent
+    1x Atarka, World Render
+    1x Bloomvine Regent
+    1x Broodcaller Scourge
+    1x Canopy Gargantuan
+    1x Changeling Wayfinder
+    1x Crystalline Crawler
+    1x Deathbringer Regent
+    1x Disruptive Stormbrood
+    1x Dragonlord Atarka
+    1x Faeburrow Elder
+    1x Glorybringer
+    1x Hellkite Courser
+    1x Hellkite Tyrant
+    1x Ignoble Hierarch
+    1x Kolaghan, the Storm's Fury
+    1x Lathliss, Dragon Queen
+    1x Lozhan, Dragons' Legacy
+    1x Marang River Regent
+    1x Miirym, Sentinel Wyrm
+    1x Nimbleclaw Adept
+    1x Ojutai, Soul of Winter
+    1x Ornithopter of Paradise
+    1x Parapet Thrasher
+    1x Sagu Wildling
+    1x Sakura-Tribe Elder
+    1x Sarkhan, Soul Aflame
+    1x Scavenger Regent
+    1x Scion of the Ur-Dragon
+    1x Selvala, Heart of the Wilds
+    1x Silumgar, the Drifting Death
+    1x Sylvan Caryatid
+    1x Terror of Mount Velus
+    1x Thrakkus the Butcher
+    1x Zurgo and Ojutai
+
+Land (37)
+
+    1x Alpine Meadow
+    1x Arctic Treeline
+    1x Canyon Slough
+    1x Command Tower
+    1x Crystal Grotto
+    1x Festering Thicket
+    3x Forest
+    1x Forest
+    1x Forest
+    1x Forest
+    1x Glacial Floodplain
+    1x Haven of the Spirit Dragon
+    1x Highland Forest
+    1x Ice Tunnel
+    1x Island
+    1x Island
+    1x Krosan Verge
+    1x Maelstrom of the Spirit Dragon
+    3x Mountain
+    1x Mountain
+    1x Mountain
+    1x Opal Palace
+    1x Path of Ancestry
+    1x Plains
+    1x Plains
+    1x Rimewood Falls
+    1x Sheltered Thicket
+    1x Snowfield Sinkhole
+    1x Sulfurous Mire
+    1x Swamp
+    1x Swamp
+    1x Volatile Fjord
+    1x Woodland Chasm
+
+Instant (2)
+
+    1x Sarkhan's Triumph
+    1x Sylvan Reclamation
+
+Commander (1)
+Commander: The Ur-Dragon
+Artifact (9)
+
+    1x Arcane Signet
+    1x Carnelian Orb of Dragonkind
+    1x Coalition Relic
+    1x Commander's Sphere
+    1x Dragon's Hoard
+    1x Firdoch Core
+    1x Gathering Stone
+    1x Liquimetal Torque
+    1x Sol Ring
+
+Sorcery (9)
+
+    1x Bring to Light
+    1x Crux of Fate
+    1x Explore
+    1x Farseek
+    1x Into the North
+    1x Kodama's Reach
+    1x Majestic Genesis
+    1x Nature's Lore
+    1x Starfall Invocation
+
+Enchantment (7)
+
+    1x Dragon Tempest
+    1x Encroaching Dragonstorm
+    1x Frostcliff Siege
+    1x Mirari's Wake
+    1x Rhythm of the Wild
+    1x Temur Ascendancy
+    1x Wild Pair
